@@ -1,4 +1,5 @@
 // Copyright (c) 2017 Rockset.
+// Copyright (c) 2024-present, SurrealDB Ltd.  All rights reserved.
 #ifndef ROCKSDB_LITE
 
 #include "cloud/purge.h"
@@ -201,7 +202,7 @@ IOStatus CloudFileSystemImpl::extractParents(
   for (auto iter = dbid_list.begin(); iter != dbid_list.end(); ++iter) {
     // download IDENTITY
     std::string cloudfile = iter->second + "/IDENTITY";
-    std::string localfile = scratch + "/.rockset_IDENTITY." + random;
+    std::string localfile = scratch + "/.cloud_IDENTITY." + random;
     st = GetStorageProvider()->GetCloudObject(bucket_name_prefix, cloudfile,
                                               localfile);
     if (!st.ok() && !st.IsNotFound()) {
@@ -233,7 +234,7 @@ IOStatus CloudFileSystemImpl::extractParents(
       return st;
     }
 
-    // all_dbids is of the form 1x45-555rockset678a-6577rockset7789-9aef
+    // all_dbids is of the form 1x45-555cloud678a-6577cloud7789-9aef
     all_dbid = rtrim_if(trim(all_dbid), '\n');
 
     // We want to return parents[1x45-555] = [678a-6577, 7789-9aef]

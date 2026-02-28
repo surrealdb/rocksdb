@@ -1,4 +1,5 @@
 // Copyright (c) 2017 Rockset
+// Copyright (c) 2024-present, SurrealDB Ltd.  All rights reserved.
 
 #ifndef ROCKSDB_LITE
 

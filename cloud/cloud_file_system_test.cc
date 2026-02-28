@@ -1,4 +1,5 @@
 // Copyright (c) 2017 Rockset
+// Copyright (c) 2024-present, SurrealDB Ltd.  All rights reserved.
 
 #include "rocksdb/cloud/cloud_file_system.h"
 

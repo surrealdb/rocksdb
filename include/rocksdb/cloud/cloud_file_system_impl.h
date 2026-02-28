@@ -1,4 +1,5 @@
 //  Copyright (c) 2016-present, Rockset, Inc.  All rights reserved.
+//  Copyright (c) 2024-present, SurrealDB Ltd.  All rights reserved.
 
 #pragma once
 #include <atomic>
@@ -147,7 +148,7 @@ class CloudFileSystemImpl : public CloudFileSystem {
   IOStatus LoadCloudManifest(const std::string& local_dbname,
                              bool read_only) override;
   // The separator used to separate dbids while creating the dbid of a clone
-  static constexpr const char* DBID_SEPARATOR = "rockset";
+  static constexpr const char* DBID_SEPARATOR = "cloud";
 
   // A map from a dbid to the list of all its parent dbids.
   typedef std::map<std::string, std::vector<std::string>> DbidParents;
@@ -294,7 +295,7 @@ class CloudFileSystemImpl : public CloudFileSystem {
   Status CheckValidity() const;
   // Status TEST_Initialize(const std::string& name) override;
   // The pathname that contains a list of all db's inside a bucket.
-  virtual const char* kDbIdRegistry() const { return "/.rockset/dbid/"; }
+  virtual const char* kDbIdRegistry() const { return "/.cloud/dbid/"; }
 
   std::string GetDbIdKey(const std::string& dbid) {
     return kDbIdRegistry() + dbid;
