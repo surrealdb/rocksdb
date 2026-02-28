@@ -5,8 +5,6 @@
 #include <memory>
 
 #include "cloud/aws/aws_file_system.h"
-#include "cloud/cloud_log_controller_impl.h"
-#include "rocksdb/cloud/cloud_log_controller.h"
 #include "rocksdb/cloud/cloud_storage_provider.h"
 #include "rocksdb/cloud/cloud_storage_provider_impl.h"
 #include "rocksdb/env.h"
@@ -255,17 +253,6 @@ int CloudFileSystemImpl::RegisterAwsObjects(ObjectLibrary& library,
   count++;
 #endif  // USE_AWS
 
-  library.AddFactory<CloudLogController>(
-      CloudLogControllerImpl::kKinesis(),
-      [](const std::string& /*uri*/, std::unique_ptr<CloudLogController>* guard,
-         std::string* errmsg) {
-        Status s = CloudLogControllerImpl::CreateKinesisController(guard);
-        if (!s.ok()) {
-          *errmsg = s.ToString();
-        }
-        return guard->get();
-      });
-  count++;
   library.AddFactory<CloudStorageProvider>(  // s3
       CloudStorageProviderImpl::kS3(),
       [](const std::string& /*uri*/,

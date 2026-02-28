@@ -5,7 +5,6 @@
 
 #include <cinttypes>
 
-#include "cloud/cloud_log_controller_impl.h"
 #include "cloud/cloud_manifest.h"
 #include "cloud/cloud_scheduler.h"
 #include "cloud/filename.h"
@@ -15,7 +14,6 @@
 #include "file/writable_file_writer.h"
 #include "port/port_posix.h"
 #include "rocksdb/cloud/cloud_file_deletion_scheduler.h"
-#include "rocksdb/cloud/cloud_log_controller.h"
 #include "rocksdb/cloud/cloud_storage_provider.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
@@ -44,11 +42,7 @@ CloudFileSystemImpl::CloudFileSystemImpl(
 }
 
 CloudFileSystemImpl::~CloudFileSystemImpl() {
-  if (cloud_fs_options.cloud_log_controller) {
-    cloud_fs_options.cloud_log_controller->StopTailingStream();
-  }
   StopPurger();
-  cloud_fs_options.cloud_log_controller.reset();
   cloud_fs_options.storage_provider.reset();
 }
 
@@ -193,10 +187,6 @@ IOStatus CloudFileSystemImpl::NewSequentialFile(
         "[%s] NewSequentialFile file %s %s", Name(), fname.c_str(),
         st.ToString().c_str());
     return st;
-
-  } else if (logfile && !cloud_fs_options.keep_local_log_files) {
-    return cloud_fs_options.cloud_log_controller->NewSequentialFile(
-        fname, file_opts, result, dbg);
   }
 
   // This is neither a sst file or a log file. Read from default env.
@@ -294,12 +284,6 @@ IOStatus CloudFileSystemImpl::NewRandomAccessFile(
         "[%s] NewRandomAccessFile file %s %s", Name(), fname.c_str(),
         st.ToString().c_str());
     return st;
-
-  } else if (logfile && !cloud_fs_options.keep_local_log_files) {
-    // read from LogController
-    st = cloud_fs_options.cloud_log_controller->NewRandomAccessFile(
-        fname, file_opts, result, dbg);
-    return st;
   }
 
   // This is neither a sst file or a log file. Read from default env.
@@ -336,18 +320,6 @@ IOStatus CloudFileSystemImpl::NewWritableFile(
           "[%s] NewWritableFile fails; unexpected WritableFile Status, src %s "
           "%s",
           Name(), fname.c_str(), s.ToString().c_str());
-      return s;
-    }
-    result->reset(f.release());
-  } else if (logfile && !cloud_fs_options.keep_local_log_files) {
-    std::unique_ptr<CloudLogWritableFile> f(
-        cloud_fs_options.cloud_log_controller->CreateWritableFile(
-            fname, file_opts, dbg));
-    if (!f || !f->status().ok()) {
-      std::string msg = std::string("[") + Name() + "] NewWritableFile";
-      s = IOStatus::IOError(msg, fname.c_str());
-      Log(InfoLogLevel::ERROR_LEVEL, info_log_, "%s src %s %s", msg.c_str(),
-          fname.c_str(), s.ToString().c_str());
       return s;
     }
     result->reset(f.release());
@@ -390,9 +362,6 @@ IOStatus CloudFileSystemImpl::FileExists(const std::string& logical_fname,
     if (st.IsNotFound()) {
       st = ExistsCloudObject(fname);
     }
-  } else if (logfile && !cloud_fs_options.keep_local_log_files) {
-    // read from controller
-    st = cloud_fs_options.cloud_log_controller->FileExists(fname);
   } else {
     st = base_fs_->FileExists(fname, io_opts, dbg);
   }
@@ -477,8 +446,6 @@ IOStatus CloudFileSystemImpl::GetFileSize(const std::string& logical_fname,
     } else {
       st = GetCloudObjectSize(fname, size);
     }
-  } else if (logfile && !cloud_fs_options.keep_local_log_files) {
-    st = cloud_fs_options.cloud_log_controller->GetFileSize(fname, size);
   } else {
     st = base_fs_->GetFileSize(fname, io_opts, size, dbg);
   }
@@ -505,9 +472,6 @@ IOStatus CloudFileSystemImpl::GetFileModificationTime(
     } else {
       st = GetCloudObjectModificationTime(fname, time);
     }
-  } else if (logfile && !cloud_fs_options.keep_local_log_files) {
-    st = cloud_fs_options.cloud_log_controller->GetFileModificationTime(fname,
-                                                                        time);
   } else {
     st = base_fs_->GetFileModificationTime(fname, io_opts, time, dbg);
   }
@@ -736,24 +700,6 @@ IOStatus CloudFileSystemImpl::DeleteFile(const std::string& logical_fname,
     // delete from local, too. Ignore the result, though. The file might not be
     // there locally.
     base_fs_->DeleteFile(fname, io_opts, dbg);
-  } else if (logfile && !cloud_fs_options.keep_local_log_files) {
-    // read from Log Controller
-    st = status_to_io_status(
-        Status(cloud_fs_options.cloud_log_controller->status()));
-    if (st.ok()) {
-      // Log a Delete record to controller stream
-      std::unique_ptr<CloudLogWritableFile> f(
-          cloud_fs_options.cloud_log_controller->CreateWritableFile(
-              fname, FileOptions(), nullptr /*dbg*/));
-      if (!f || !f->status().ok()) {
-        std::string msg =
-            "[" + std::string(cloud_fs_options.cloud_log_controller->Name()) +
-            "] DeleteFile";
-        st = IOStatus::IOError(msg, fname.c_str());
-      } else {
-        st = f->LogDelete();
-      }
-    }
   } else {
     st = base_fs_->DeleteFile(fname, io_opts, dbg);
   }
@@ -2184,7 +2130,7 @@ IOStatus CloudFileSystemImpl::UnlockFile(FileLock* /*lock*/,
 }
 
 std::string CloudFileSystemImpl::GetWALCacheDir() {
-  return cloud_fs_options.cloud_log_controller->GetCacheDir();
+  return "";
 }
 
 Status CloudFileSystemImpl::PrepareOptions(const ConfigOptions& options) {
@@ -2192,26 +2138,7 @@ Status CloudFileSystemImpl::PrepareOptions(const ConfigOptions& options) {
   if (!base_fs_) {
     base_fs_ = FileSystem::Default();
   }
-  Status status;
-  if (!cloud_fs_options.cloud_log_controller &&
-      !cloud_fs_options.keep_local_log_files) {
-    if (cloud_fs_options.log_type == LogType::kLogKinesis) {
-      status = CloudLogController::CreateFromString(
-          options, CloudLogControllerImpl::kKinesis(),
-          &cloud_fs_options.cloud_log_controller);
-    } else if (cloud_fs_options.log_type == LogType::kLogKafka) {
-      status = CloudLogController::CreateFromString(
-          options, CloudLogControllerImpl::kKafka(),
-          &cloud_fs_options.cloud_log_controller);
-    } else {
-      status = Status::NotSupported("Unsupported log controller type");
-    }
-    if (!status.ok()) {
-      return status;
-    }
-  }
-
-  status = CheckValidity();
+  Status status = CheckValidity();
   if (!status.ok()) {
     return status;
   }
@@ -2248,10 +2175,6 @@ Status CloudFileSystemImpl::CheckValidity() const {
   } else if (!cloud_fs_options.storage_provider) {
     return Status::InvalidArgument(
         "Cloud environment requires a storage provider");
-  } else if (!cloud_fs_options.keep_local_log_files &&
-             !cloud_fs_options.cloud_log_controller) {
-    return Status::InvalidArgument(
-        "Log controller required for remote log files");
   } else {
     return Status::OK();
   }
