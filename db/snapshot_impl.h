@@ -51,6 +51,25 @@ class SnapshotImpl : public Snapshot {
   bool is_write_conflict_boundary_;
 };
 
+#ifdef ROCKSDB_CLOUD
+// RocksDB-Cloud contribution begin
+struct SuperVersion;
+class ColumnFamilyData;
+class SuperSnapshotImpl : public SnapshotImpl {
+ public:
+  SuperSnapshotImpl(ColumnFamilyData* cfd, SuperVersion* sv)
+      : cfd_(cfd), sv_(sv) {}
+
+  ColumnFamilyData* cfd() const { return cfd_; }
+  SuperVersion* sv() const { return sv_; }
+
+ private:
+  ColumnFamilyData* cfd_;
+  SuperVersion* sv_{nullptr};
+};
+// RocksDB-Cloud contribution end
+#endif  // ROCKSDB_CLOUD
+
 class SnapshotList {
  public:
   SnapshotList() {

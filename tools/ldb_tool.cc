@@ -143,6 +143,9 @@ void LDBCommandRunner::PrintHelp(const LDBOptions& ldb_options,
   WriteExternalSstFilesCommand::Help(ret);
   IngestExternalSstFilesCommand::Help(ret);
   UnsafeRemoveSstFileCommand::Help(ret);
+#ifdef ROCKSDB_CLOUD
+  CloudManifestDumpCommand::Help(ret);
+#endif  // ROCKSDB_CLOUD
 
   fprintf(to_stderr ? stderr : stdout, "%s\n", ret.c_str());
 }

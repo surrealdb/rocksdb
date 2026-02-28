@@ -377,6 +377,9 @@ class WriteBatch : public WriteBatchBase {
 
   // Retrieve the serialized version of this batch.
   const std::string& Data() const { return rep_; }
+#ifdef ROCKSDB_CLOUD
+  std::string& Data() { return rep_; }
+#endif  // ROCKSDB_CLOUD
 
   // Release the serialized data and clear this batch.
   std::string Release();

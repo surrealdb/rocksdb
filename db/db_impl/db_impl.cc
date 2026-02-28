@@ -6998,4 +6998,56 @@ void DBImpl::TrackOrUntrackFiles(
   }
 }
 
+#ifdef ROCKSDB_CLOUD
+Status DBImpl::GetSuperSnapshots(
+    const std::vector<ColumnFamilyHandle*>& /*column_families*/,
+    std::vector<const Snapshot*>* /*snapshots*/) {
+  return Status::NotSupported("GetSuperSnapshots not yet implemented");
+}
+
+SequenceNumber DBImpl::GetIteratorSequenceNumber(Iterator* /*it*/) {
+  return 0;
+}
+
+Status DBImpl::ApplyReplicationLogRecord(
+    ReplicationLogRecord /*record*/, std::string /*replication_sequence*/,
+    CFOptionsFactory /*cf_options_factory*/,
+    uint64_t /*snapshot_replication_epoch*/,
+    ApplyReplicationLogRecordInfo* /*info*/, unsigned /*flags*/) {
+  return Status::NotSupported("ApplyReplicationLogRecord not yet implemented");
+}
+
+Status DBImpl::CheckNextEpochNumberConsistency(const VersionEdit& /*e*/,
+                                               ColumnFamilyData* /*cfd*/) {
+  return Status::OK();
+}
+
+Status DBImpl::GetReplicationRecordDebugString(
+    const ReplicationLogRecord& /*record*/, std::string* /*out*/) const {
+  return Status::NotSupported(
+      "GetReplicationRecordDebugString not yet implemented");
+}
+
+Status DBImpl::GetPersistedReplicationSequence(std::string* out) {
+  InstrumentedMutexLock l(&mutex_);
+  *out = versions_->GetReplicationSequence();
+  return Status::OK();
+}
+
+Status DBImpl::GetManifestUpdateSequence(uint64_t* out) {
+  InstrumentedMutexLock l(&mutex_);
+  *out = versions_->GetManifestUpdateSequence();
+  return Status::OK();
+}
+
+void DBImpl::UpdateReplicationEpoch(uint64_t new_replication_epoch) {
+  InstrumentedMutexLock l(&mutex_);
+  versions_->UpdateReplicationEpoch(new_replication_epoch);
+}
+
+void DBImpl::NewManifestOnNextUpdate() {
+  versions_->NewManifestOnNextUpdate();
+}
+#endif  // ROCKSDB_CLOUD
+
 }  // namespace ROCKSDB_NAMESPACE
