@@ -42,6 +42,9 @@
 #include "db/version_edit.h"
 #include "db/version_edit_handler.h"
 #include "db/wide/wide_columns_helper.h"
+#ifdef ROCKSDB_CLOUD
+#include "db/replication_epoch_edit.h"
+#endif  // ROCKSDB_CLOUD
 #include "file/file_util.h"
 #include "table/compaction_merging_iterator.h"
 
@@ -2973,6 +2976,10 @@ void Version::MultiGet(const ReadOptions& read_options, MultiGetRange* range,
                               /*skip_range_deletions=*/false, f, blob_ctxs,
                               /*table_handle=*/nullptr, num_filter_read,
                               num_index_read, num_sst_read);
+#ifdef ROCKSDB_CLOUD
+          // TODO(cloud): Add multiget_sst_file_read_count to PerfContextBase
+          // and DEF_PERF_CONTEXT_METRICS when perf counters are needed.
+#endif  // ROCKSDB_CLOUD
           if (fp.GetHitFileLevel() == 0) {
             dump_stats_for_l0_file = true;
           }
@@ -5917,11 +5924,68 @@ Status VersionSet::ProcessManifestWrites(
   }
 #endif  // NDEBUG
 
+#ifdef ROCKSDB_CLOUD
+  std::optional<std::string> pending_persist_replication_sequence;
+  uint64_t pending_manifest_update_sequence = manifest_update_sequence_;
+  bool is_leader{false};
+  ReplicationEpochAdditions new_replication_epochs;
+  {
+    Status s;
+    for (auto& e : batch_edits) {
+      if (!db_options_->replication_log_listener &&
+          !e->HasManifestUpdateSequence() &&
+          pending_manifest_update_sequence == 0) {
+        continue;
+      }
+      ++pending_manifest_update_sequence;
+      if (e->HasManifestUpdateSequence()) {
+        if (e->GetManifestUpdateSequence() != pending_manifest_update_sequence) {
+          std::ostringstream oss;
+          oss << "Gap in ManifestUpdateSequence while writing to manifest, "
+                 "expected=" << pending_manifest_update_sequence
+              << " got=" << e->GetManifestUpdateSequence();
+          s = Status::Corruption(oss.str());
+          break;
+        }
+        for (const auto& epoch_addition : e->GetReplicationEpochAdditions()) {
+          new_replication_epochs.push_back(epoch_addition);
+        }
+      } else if (db_options_->replication_log_listener) {
+        e->SetManifestUpdateSequence(pending_manifest_update_sequence);
+        is_leader = true;
+      }
+      if (e->HasReplicationSequence()) {
+        pending_persist_replication_sequence = e->GetReplicationSequence();
+      }
+    }
+    if (!s.ok()) {
+      for (auto v : versions) {
+        delete v;
+      }
+      return s;
+    }
+  }
+
+  auto new_manifest_force =
+      new_manifest_on_next_update_.exchange(false, std::memory_order_relaxed);
+
+  if (next_replication_epoch_ && is_leader) {
+    auto firstMUS = first_writer.edit_list.front()->GetManifestUpdateSequence();
+    ReplicationEpochAddition epochAddition(*next_replication_epoch_, firstMUS);
+    first_writer.edit_list.front()->AddReplicationEpoch(epochAddition);
+    new_replication_epochs.emplace_back(std::move(epochAddition));
+  }
+#endif  // ROCKSDB_CLOUD
+
   uint64_t prev_manifest_file_size = manifest_file_size_;
   assert(pending_manifest_file_number_ == 0);
   if (!skip_manifest_write &&
       (!descriptor_log_ ||
-       prev_manifest_file_size >= tuned_max_manifest_file_size_)) {
+       prev_manifest_file_size >= tuned_max_manifest_file_size_
+#ifdef ROCKSDB_CLOUD
+       || next_replication_epoch_ || new_manifest_force
+#endif
+       )) {
     TEST_SYNC_POINT("VersionSet::ProcessManifestWrites:BeforeNewManifest");
     new_descriptor_log = true;
   } else {
@@ -6230,6 +6294,23 @@ Status VersionSet::ProcessManifestWrites(
       manifest_file_number_ = pending_manifest_file_number_;
       manifest_file_size_ = new_manifest_file_size;
       prev_log_number_ = first_writer.edit_list.front()->GetPrevLogNumber();
+#ifdef ROCKSDB_CLOUD
+      replication_epochs_.AddEpochs(new_replication_epochs,
+                                    db_options_->max_num_replication_epochs);
+      if (pending_persist_replication_sequence) {
+        if (db_options_->replication_epoch_extractor) {
+          auto epoch = db_options_->replication_epoch_extractor
+                           ->EpochOfReplicationSequence(
+                               *pending_persist_replication_sequence);
+          bool replication_epoch_set_empty = replication_epochs_.empty();
+          replication_epochs_.DeleteEpochsBefore(epoch);
+          assert(replication_epoch_set_empty || !replication_epochs_.empty());
+        }
+        replication_sequence_ = std::move(*pending_persist_replication_sequence);
+      }
+      manifest_update_sequence_ = pending_manifest_update_sequence;
+      next_replication_epoch_.reset();
+#endif  // ROCKSDB_CLOUD
     }
   } else {
     std::string version_edits;
@@ -7208,6 +7289,23 @@ Status VersionSet::WriteCurrentStateToManifest(
       }
     }
   }
+#ifdef ROCKSDB_CLOUD
+  if (!replication_epochs_.empty()) {
+    VersionEdit replication_epoch_additions;
+    for (const auto& addition : replication_epochs_.GetEpochs()) {
+      replication_epoch_additions.AddReplicationEpoch(addition);
+    }
+    std::string record;
+    if (!replication_epoch_additions.EncodeTo(&record)) {
+      return Status::Corruption("Unable to Encode VersionEdit: " +
+                                replication_epoch_additions.DebugString(true));
+    }
+    io_s = log->AddRecord(write_options, record);
+    if (!io_s.ok()) {
+      return io_s;
+    }
+  }
+#endif  // ROCKSDB_CLOUD
   return Status::OK();
 }
 

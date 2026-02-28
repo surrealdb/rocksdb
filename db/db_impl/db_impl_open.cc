@@ -271,6 +271,13 @@ Status DBImpl::ValidateOptions(const DBOptions& db_options) {
         "atomic_flush is incompatible with enable_pipelined_write");
   }
 
+#ifdef ROCKSDB_CLOUD
+  if (db_options.replication_log_listener && !db_options.atomic_flush) {
+    return Status::InvalidArgument(
+        "atomic_flush has to be set if replication_log_listener is set");
+  }
+#endif  // ROCKSDB_CLOUD
+
   if (db_options.use_direct_io_for_flush_and_compaction &&
       0 == db_options.writable_file_max_buffer_size) {
     return Status::InvalidArgument(
@@ -573,7 +580,11 @@ Status DBImpl::Recover(
   if (!s.ok()) {
     return s;
   }
+#ifdef ROCKSDB_CLOUD
+  if (s.ok() && !read_only && !immutable_db_options_.replication_log_listener) {
+#else
   if (s.ok() && !read_only) {
+#endif
     for (auto cfd : *versions_->GetColumnFamilySet()) {
       const auto& moptions = cfd->GetLatestMutableCFOptions();
       // Try to trivially move files down the LSM tree to start from bottommost
@@ -1128,6 +1139,11 @@ Status DBImpl::RecoverLogFiles(const std::vector<uint64_t>& wal_numbers,
                                SequenceNumber* next_sequence, bool read_only,
                                bool is_retry, bool* corrupted_wal_found,
                                RecoveryContext* recovery_ctx) {
+#ifdef ROCKSDB_CLOUD
+  if (immutable_db_options_.replication_log_listener) {
+    return Status::OK();
+  }
+#endif  // ROCKSDB_CLOUD
   mutex_.AssertHeld();
 
   std::unordered_map<int, VersionEdit> version_edits;

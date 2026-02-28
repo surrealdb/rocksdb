@@ -21,6 +21,10 @@ struct ImmutableDBOptions {
   void Dump(Logger* log) const;
 
   bool create_if_missing;
+#ifdef ROCKSDB_CLOUD
+  std::shared_ptr<ReplicationLogListener> replication_log_listener;
+  std::shared_ptr<ReplicationEpochExtractor> replication_epoch_extractor;
+#endif  // ROCKSDB_CLOUD
   bool create_missing_column_families;
   bool error_if_exists;
   bool paranoid_checks;
@@ -104,6 +108,9 @@ struct ImmutableDBOptions {
   Temperature metadata_write_temperature;
   Temperature wal_write_temperature;
   CompactionStyleSet calculate_sst_write_lifetime_hint_set;
+#ifdef ROCKSDB_CLOUD
+  uint32_t max_num_replication_epochs;
+#endif  // ROCKSDB_CLOUD
 
   // Beginning convenience/helper objects that are not part of the base
   // DBOptions

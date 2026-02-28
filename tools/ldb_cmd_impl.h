@@ -835,4 +835,27 @@ class CompactionProgressDumpCommand : public LDBCommand {
   static const std::string ARG_PATH;
 };
 
+#ifdef ROCKSDB_CLOUD
+class CloudManifestDumpCommand : public LDBCommand {
+ public:
+  static std::string Name() { return "cloud_manifest_dump"; }
+
+  CloudManifestDumpCommand(const std::vector<std::string>& params,
+                           const std::map<std::string, std::string>& options,
+                           const std::vector<std::string>& flags);
+  static void Help(std::string& ret);
+
+  void DoCommand() override;
+
+  bool NoDBOpen() override { return true; }
+
+ private:
+  bool verbose_{false};
+  std::string path_;
+
+  static const std::string ARG_PATH;
+  static const std::string ARG_VERBOSE;
+};
+#endif  // ROCKSDB_CLOUD
+
 }  // namespace ROCKSDB_NAMESPACE

@@ -985,6 +985,24 @@ class FSRandomAccessFile {
     return IOStatus::OK();
   }
 
+#ifdef ROCKSDB_CLOUD
+  // RocksDB-Cloud contribution begin
+  // Asynchronous variant of MultiRead. Reads the requested data as described
+  // by reqs. The callback cb is invoked when reads complete. The default
+  // implementation falls back to the synchronous MultiRead.
+  virtual IOStatus MultiReadAsync(
+      FSReadRequest* reqs, size_t num_reqs, const IOOptions& opts,
+      std::function<void(const FSReadRequest*, size_t, void*)> cb, void* cb_arg,
+      void** /*io_handles*/, size_t* num_io_handles,
+      IOHandleDeleter* /*del_fns*/, IODebugContext* dbg) {
+    IOStatus s = MultiRead(reqs, num_reqs, opts, dbg);
+    *num_io_handles = 0;
+    cb(reqs, num_reqs, cb_arg);
+    return s;
+  }
+  // RocksDB-Cloud contribution end
+#endif  // ROCKSDB_CLOUD
+
   // Tries to get an unique ID for this file that will be the same each time
   // the file is opened (and will stay the same while the file is open).
   // Furthermore, it tries to make this ID at most "max_size" bytes. If such an
@@ -1779,6 +1797,18 @@ class FSRandomAccessFileWrapper : public FSRandomAccessFile {
                      const IOOptions& options, IODebugContext* dbg) override {
     return target_->MultiRead(reqs, num_reqs, options, dbg);
   }
+#ifdef ROCKSDB_CLOUD
+  // RocksDB-Cloud contribution begin
+  IOStatus MultiReadAsync(
+      FSReadRequest* reqs, size_t num_reqs, const IOOptions& opts,
+      std::function<void(const FSReadRequest*, size_t, void*)> cb, void* cb_arg,
+      void** io_handles, size_t* num_io_handles, IOHandleDeleter* del_fns,
+      IODebugContext* dbg) override {
+    return target_->MultiReadAsync(reqs, num_reqs, opts, cb, cb_arg,
+                                   io_handles, num_io_handles, del_fns, dbg);
+  }
+  // RocksDB-Cloud contribution end
+#endif  // ROCKSDB_CLOUD
   IOStatus Prefetch(uint64_t offset, size_t n, const IOOptions& options,
                     IODebugContext* dbg) override {
     return target_->Prefetch(offset, n, options, dbg);

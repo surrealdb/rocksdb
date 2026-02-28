@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -1073,6 +1074,31 @@ class DB {
   // Release a previously acquired snapshot.  The caller must not
   // use "snapshot" after this call.
   virtual void ReleaseSnapshot(const Snapshot* snapshot) = 0;
+
+#ifdef ROCKSDB_CLOUD
+  // RocksDB-Cloud contribution begin
+  // SuperSnapshot is a combination of a snapshot and a super-version. They
+  // fulfill the same goal as snapshots, i.e. provide a consistent view of the
+  // database. However, unlike snapshots, they also pin the current
+  // super-version (memtable, immutable memtable list and file LSM tree). In
+  // that way they are similar to iterators, which also pin the current
+  // super-version for the duration of their lifetime.
+  // Each super-snapshot is tied to a column family and the column family in the
+  // read request has to match with the column family of the snapshot.
+  //
+  // Just like the regular snapshot, the caller must call ReleaseSnapshot() when
+  // it's done with the snapshot, and before closing the database.
+  virtual Status GetSuperSnapshots(
+      const std::vector<ColumnFamilyHandle*>& /*column_families*/,
+      std::vector<const Snapshot*>* /*snapshots*/) {
+    return Status::NotSupported("GetSuperSnapshots not implemented");
+  }
+  // RocksDB-Cloud contribution end
+
+  virtual SequenceNumber GetIteratorSequenceNumber(Iterator* /*it*/) {
+    return 0;
+  }
+#endif  // ROCKSDB_CLOUD
 
   // Contains all valid property arguments for GetProperty() or
   // GetMapProperty(). Each is a "string" property for retrieval with
@@ -2220,6 +2246,54 @@ class DB {
   virtual Status TryCatchUpWithPrimary() {
     return Status::NotSupported("Supported only by secondary instance");
   }
+
+#ifdef ROCKSDB_CLOUD
+  struct ApplyReplicationLogRecordInfo {
+    bool has_manifest_writes{false};
+    uint64_t current_manifest_update_seq{0};
+    uint64_t latest_applied_manifest_update_seq{0};
+    bool diverged_manifest_writes{false};
+
+    std::vector<std::unique_ptr<ColumnFamilyHandle>> added_column_families;
+    std::vector<uint32_t> deleted_column_families;
+  };
+
+  // Applies the replication record provided by the leader's
+  // ReplicationLogListener. Info contains useful information about the event
+  // that was applied.
+  //
+  // cf_options_factory is invoked when ApplyReplicationLogRecord contains a
+  // column family creation. Column family name is given as an argument and its
+  // options need to be returned.
+  //
+  // REQUIRES: info needs to be provided, can't be nullptr.
+  enum ApplyReplicationLogRecordFlags : unsigned {
+    AR_EVICT_OBSOLETE_FILES = 1U << 0,
+  };
+  using CFOptionsFactory = std::function<ColumnFamilyOptions(Slice)>;
+  virtual Status ApplyReplicationLogRecord(
+      ReplicationLogRecord /*record*/, std::string /*replication_sequence*/,
+      CFOptionsFactory /*cf_options_factory*/,
+      uint64_t /*snapshot_replication_epoch*/,
+      ApplyReplicationLogRecordInfo* /*info*/, unsigned /*flags*/ = 0) {
+    return Status::NotSupported("ApplyReplicationLogRecord not implemented");
+  }
+
+  virtual Status GetPersistedReplicationSequence(std::string* /*out*/) {
+    return Status::NotSupported(
+        "GetPersistedReplicationSequence not implemented");
+  }
+
+  virtual Status GetManifestUpdateSequence(uint64_t* /*out*/) {
+    return Status::NotSupported("GetManifestUpdateSequence not implemented");
+  }
+
+  virtual void UpdateReplicationEpoch(uint64_t /*next_replication_epoch*/) {}
+
+  virtual void NewManifestOnNextUpdate() {}
+
+  virtual uint64_t GetNextFileNumber() const { return 0; }
+#endif  // ROCKSDB_CLOUD
 };
 
 struct WriteStallStatsMapKeys {

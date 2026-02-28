@@ -47,6 +47,9 @@
 #include "db/version_builder.h"
 #include "db/version_edit.h"
 #include "db/write_controller.h"
+#ifdef ROCKSDB_CLOUD
+#include "db/replication_epoch_edit.h"
+#endif  // ROCKSDB_CLOUD
 #include "env/file_system_tracer.h"
 #if USE_COROUTINES
 #include "folly/coro/BlockingWait.h"
@@ -1648,6 +1651,34 @@ class VersionSet {
     return manifest_preallocation_size_;
   }
 
+#ifdef ROCKSDB_CLOUD
+  uint64_t GetManifestUpdateSequence() const {
+    return manifest_update_sequence_;
+  }
+  std::string GetReplicationSequence() const { return replication_sequence_; }
+  bool IsReplicationEpochsEmpty() const {
+    return replication_epochs_.empty();
+  }
+  std::optional<uint64_t> GetReplicationEpochForMUS(uint64_t mus) const {
+    return replication_epochs_.GetEpochForMUS(mus);
+  }
+#ifndef NDEBUG
+  const ReplicationEpochSet& TEST_GetReplicationEpochSet() const {
+    return replication_epochs_;
+  }
+#endif
+
+  void UpdateReplicationEpoch(uint64_t epoch) {
+    next_replication_epoch_.emplace(epoch);
+  }
+  void NewManifestOnNextUpdate() {
+    new_manifest_on_next_update_.store(true, std::memory_order_relaxed);
+  }
+
+  uint64_t GetCurrentReplicationEpoch() const;
+  bool HasReplicationEpochChanged();
+#endif  // ROCKSDB_CLOUD
+
  protected:
   struct ManifestWriter;
 
@@ -1803,6 +1834,14 @@ class VersionSet {
 
   // Pointer to the DB's ErrorHandler.
   ErrorHandler* const error_handler_;
+
+#ifdef ROCKSDB_CLOUD
+  std::optional<uint64_t> next_replication_epoch_;
+  std::atomic_bool new_manifest_on_next_update_{false};
+  uint64_t manifest_update_sequence_{0};
+  std::string replication_sequence_;
+  ReplicationEpochSet replication_epochs_;
+#endif  // ROCKSDB_CLOUD
 
  private:
   // REQUIRES db mutex at beginning. may release and re-acquire db mutex

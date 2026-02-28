@@ -94,6 +94,7 @@ option(WITH_SNAPPY "build with SNAPPY" OFF)
 option(WITH_LZ4 "build with lz4" OFF)
 option(WITH_ZLIB "build with zlib" OFF)
 option(WITH_ZSTD "build with zstd" OFF)
+option(WITH_CLOUD "Build with cloud support" OFF)
 option(WITH_WINDOWS_UTF8_FILENAMES "use UTF8 as characterset for opening files, regardles of the system code page" OFF)
 if (WITH_WINDOWS_UTF8_FILENAMES)
   add_definitions(-DROCKSDB_WINDOWS_UTF8_FILENAMES)
@@ -431,6 +432,17 @@ endif()
 option(WITH_DYNAMIC_EXTENSION "build with dynamic extension support" OFF)
 if(NOT WITH_DYNAMIC_EXTENSION)
   add_definitions(-DROCKSDB_NO_DYNAMIC_EXTENSION)
+endif()
+
+if(WITH_CLOUD)
+  add_definitions(-DROCKSDB_CLOUD)
+  option(WITH_AWS "Build with AWS support" OFF)
+  if(WITH_AWS)
+    find_package(AWSSDK REQUIRED COMPONENTS s3 transfer kinesis)
+    add_definitions(-DHAS_AWS_SDK -DUSE_AWS)
+    include_directories(${AWSSDK_INCLUDE_DIRS})
+    list(APPEND THIRDPARTY_LIBS ${AWSSDK_LIBRARIES})
+  endif()
 endif()
 
 option(ASSERT_STATUS_CHECKED "build with assert status checked" OFF)
@@ -1119,6 +1131,34 @@ if(USE_FOLLY_LITE)
 
   add_definitions(-DUSE_FOLLY -DFOLLY_NO_CONFIG)
   list(APPEND THIRDPARTY_LIBS glog)
+endif()
+
+if(WITH_CLOUD)
+  set(CLOUD_SOURCES
+    cloud/cloud_file_system.cc
+    cloud/cloud_file_system_impl.cc
+    cloud/cloud_storage_provider.cc
+    cloud/cloud_log_controller.cc
+    cloud/cloud_manifest.cc
+    cloud/cloud_scheduler.cc
+    cloud/cloud_file_deletion_scheduler.cc
+    cloud/db_cloud_impl.cc
+    cloud/manifest_reader.cc
+    cloud/purge.cc
+    db/db_impl/replication_codec.cc
+    db/replication_epoch_edit.cc
+  )
+  list(APPEND SOURCES ${CLOUD_SOURCES})
+  if(WITH_AWS)
+    set(CLOUD_AWS_SOURCES
+      cloud/aws/aws_file_system.cc
+      cloud/aws/aws_s3.cc
+      cloud/aws/aws_kinesis.cc
+      cloud/aws/aws_kafka.cc
+      cloud/aws/aws_retry.cc
+    )
+    list(APPEND SOURCES ${CLOUD_AWS_SOURCES})
+  endif()
 endif()
 
 set(ROCKSDB_STATIC_LIB rocksdb${ARTIFACT_SUFFIX})
