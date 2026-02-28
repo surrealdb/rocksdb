@@ -355,7 +355,6 @@ CLOUD_SOURCES =                                                 \
   cloud/cloud_file_system.cc                                    \
   cloud/cloud_file_system_impl.cc                               \
   cloud/cloud_storage_provider.cc                               \
-  cloud/cloud_log_controller.cc                                 \
   cloud/cloud_manifest.cc                                       \
   cloud/cloud_scheduler.cc                                      \
   cloud/cloud_file_deletion_scheduler.cc                        \
