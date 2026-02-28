@@ -1,4 +1,5 @@
 // Copyright (c) 2017 Rockset.
+// Copyright (c) 2024-present, SurrealDB Ltd.  All rights reserved.
 #ifndef ROCKSDB_LITE
 
 #include "rocksdb/cloud/cloud_file_system.h"
@@ -105,7 +106,7 @@ BucketOptions::BucketOptions() {
   if (!CloudFileSystemOptions::GetNameFromEnvironment(
           "ROCKSDB_CLOUD_TEST_BUCKET_PREFIX", "ROCKSDB_CLOUD_BUCKET_PREFIX",
           &prefix_)) {
-    prefix_ = "rockset.";
+    prefix_ = "cloud.";
   }
   if (CloudFileSystemOptions::GetNameFromEnvironment(
           "ROCKSDB_CLOUD_TEST_BUCKET_NAME", "ROCKSDB_CLOUD_BUCKET_NAME",
