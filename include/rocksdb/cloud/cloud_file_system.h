@@ -1,4 +1,5 @@
 //  Copyright (c) 2016-present, Rockset, Inc.  All rights reserved.
+//  Copyright (c) 2024-present, SurrealDB Ltd.  All rights reserved.
 //
 #pragma once
 #include <chrono>
@@ -105,7 +106,7 @@ class BucketOptions {
  private:
   std::string bucket_;  // The suffix for the bucket name
   std::string
-      prefix_;  // The prefix for the bucket name.  Defaults to "rockset."
+      prefix_;  // The prefix for the bucket name.  Defaults to "cloud."
   std::string object_;  // The object path for the bucket
   std::string region_;  // The region for the bucket
   std::string name_;    // The name of the bucket (prefix_ + bucket_)

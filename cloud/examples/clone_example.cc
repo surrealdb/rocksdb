@@ -1,4 +1,5 @@
 // Copyright (c) 2017-present, Rockset, Inc.  All rights reserved.
+// Copyright (c) 2024-present, SurrealDB Ltd.  All rights reserved.
 #include <cstdio>
 #include <iostream>
 #include <string>
@@ -98,11 +99,11 @@ int main() {
   char* user = getenv("USER");
   kBucketSuffix.append(user);
 
-  const std::string bucketPrefix = "rockset.";
+  // "cloud." is the default bucket prefix
+  const std::string bucketPrefix = "cloud.";
   // create a bucket name for debugging purposes
   const std::string bucketName = bucketPrefix + kBucketSuffix;
 
-  // Needed if using bucket prefix other than the default "rockset."
   cloud_fs_options.src_bucket.SetBucketName(kBucketSuffix, bucketPrefix);
   cloud_fs_options.dest_bucket.SetBucketName(kBucketSuffix, bucketPrefix);
 

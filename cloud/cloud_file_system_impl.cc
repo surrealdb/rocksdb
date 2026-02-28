@@ -1,4 +1,5 @@
 // Copyright (c) 2017 Rockset.
+// Copyright (c) 2024-present, SurrealDB Ltd.  All rights reserved.
 #ifndef ROCKSDB_LITE
 
 #include "rocksdb/cloud/cloud_file_system_impl.h"
@@ -2000,7 +2001,7 @@ IOStatus CloudFileSystemImpl::RollNewCookie(
   return IOStatus::OK();
 }
 
-// All db in a bucket are stored in path /.rockset/dbid/<dbid>
+// All db in a bucket are stored in path /.cloud/dbid/<dbid>
 // The value of the object is the pathname where the db resides.
 IOStatus CloudFileSystemImpl::SaveDbid(const std::string& bucket_name,
                                        const std::string& dbid,
