@@ -70,6 +70,10 @@
 #include "util/stop_watch.h"
 #include "util/thread_local.h"
 
+#ifdef ROCKSDB_CLOUD
+#include "db/db_impl/replication_codec.h"
+#endif
+
 namespace ROCKSDB_NAMESPACE {
 
 class Arena;
@@ -86,6 +90,9 @@ class WriteCallback;
 struct JobContext;
 struct ExternalSstFileInfo;
 struct MemTableInfo;
+#ifdef ROCKSDB_CLOUD
+struct MemTableLogNumAndReplSeq;
+#endif
 
 // Class to maintain directories for all database paths other than main one.
 class Directories {
@@ -388,6 +395,16 @@ class DBImpl : public DB {
       const ReadOptions& _read_options, ColumnFamilyHandle* column_family,
       const MultiScanArgs& scan_opts) override;
 
+#ifdef ROCKSDB_CLOUD
+  SequenceNumber GetIteratorSequenceNumber(Iterator* it) override;
+
+  // RocksDB-Cloud contribution begin
+  Status GetSuperSnapshots(
+      const std::vector<ColumnFamilyHandle*>& column_families,
+      std::vector<const Snapshot*>* snapshots) override;
+  // RocksDB-Cloud contribution end
+#endif  // ROCKSDB_CLOUD
+
   const Snapshot* GetSnapshot() override;
   void ReleaseSnapshot(const Snapshot* snapshot) override;
 
@@ -455,6 +472,23 @@ class DBImpl : public DB {
 
   void EnableManualCompaction() override;
   void DisableManualCompaction() override;
+
+#ifdef ROCKSDB_CLOUD
+  Status ApplyReplicationLogRecord(ReplicationLogRecord record,
+                                   std::string replication_sequence,
+                                   CFOptionsFactory cf_options_factory,
+                                   uint64_t snapshot_replication_epoch,
+                                   ApplyReplicationLogRecordInfo* info,
+                                   unsigned flags) override;
+
+  Status CheckNextEpochNumberConsistency(const VersionEdit& e,
+                                         ColumnFamilyData* cfd);
+  Status GetReplicationRecordDebugString(
+      const ReplicationLogRecord& record, std::string* out) const;
+  Status GetPersistedReplicationSequence(std::string* out) override;
+  Status GetManifestUpdateSequence(uint64_t* out) override;
+#endif  // ROCKSDB_CLOUD
+
   void AbortAllCompactions() override;
   void ResumeAllCompactions() override;
 
@@ -1135,6 +1169,14 @@ class DBImpl : public DB {
 
   Status WaitForCompact(
       const WaitForCompactOptions& wait_for_compact_options) override;
+
+#ifdef ROCKSDB_CLOUD
+  void UpdateReplicationEpoch(uint64_t new_replication_epoch) override;
+  void NewManifestOnNextUpdate() override;
+  uint64_t GetNextFileNumber() const override {
+    return versions_->current_next_file_number();
+  }
+#endif  // ROCKSDB_CLOUD
 
 #ifndef NDEBUG
   // Compact any files in the named level that overlap [*begin, *end]
@@ -2255,6 +2297,12 @@ class DBImpl : public DB {
   Status SwitchMemtable(ColumnFamilyData* cfd, WriteContext* context,
                         ReadOnlyMemTable* new_imm = nullptr,
                         SequenceNumber last_seqno = 0);
+
+#ifdef ROCKSDB_CLOUD
+  Status SwitchMemtableWithoutCreatingWAL(
+      ColumnFamilyData* cfd, WriteContext* context, uint64_t next_log_num,
+      const std::string& replication_sequence);
+#endif  // ROCKSDB_CLOUD
 
   // Select and output column families qualified for atomic flush in
   // `selected_cfds`. If `provided_candidate_cfds` is non-empty, it will be used

@@ -723,6 +723,10 @@ ImmutableDBOptions::ImmutableDBOptions() : ImmutableDBOptions(DBOptions{}) {}
 
 ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
     : create_if_missing(options.create_if_missing),
+#ifdef ROCKSDB_CLOUD
+      replication_log_listener(options.replication_log_listener),
+      replication_epoch_extractor(options.replication_epoch_extractor),
+#endif  // ROCKSDB_CLOUD
       create_missing_column_families(options.create_missing_column_families),
       error_if_exists(options.error_if_exists),
       paranoid_checks(options.paranoid_checks),
@@ -812,7 +816,11 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
       metadata_write_temperature(options.metadata_write_temperature),
       wal_write_temperature(options.wal_write_temperature),
       calculate_sst_write_lifetime_hint_set(
-          options.calculate_sst_write_lifetime_hint_set) {
+          options.calculate_sst_write_lifetime_hint_set)
+#ifdef ROCKSDB_CLOUD
+      ,max_num_replication_epochs(options.max_num_replication_epochs)
+#endif  // ROCKSDB_CLOUD
+{
   fs = env->GetFileSystem();
   clock = env->GetSystemClock().get();
   logger = info_log.get();

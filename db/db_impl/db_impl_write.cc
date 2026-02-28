@@ -2487,6 +2487,58 @@ void DBImpl::NotifyOnMemTableSealed(ColumnFamilyData* /*cfd*/,
   mutex_.Lock();
 }
 
+#ifdef ROCKSDB_CLOUD
+Status DBImpl::SwitchMemtableWithoutCreatingWAL(
+    ColumnFamilyData* cfd, WriteContext* context, uint64_t next_log_num,
+    const std::string& replication_sequence) {
+  mutex_.AssertHeld();
+  MemTable* new_mem = nullptr;
+
+  assert(versions_->prev_log_number() == 0);
+
+  const MutableCFOptions mutable_cf_options =
+      cfd->GetLatestMutableCFOptions();
+
+  MemTableInfo memtable_info;
+  memtable_info.cf_name = cfd->GetName();
+  memtable_info.first_seqno = cfd->mem()->GetFirstSequenceNumber();
+  memtable_info.earliest_seqno = cfd->mem()->GetEarliestSequenceNumber();
+  memtable_info.num_entries = cfd->mem()->NumEntries();
+  memtable_info.num_deletes = cfd->mem()->NumDeletion();
+  int num_imm_unflushed = cfd->imm()->NumNotFlushed();
+  SequenceNumber seq = versions_->LastSequence();
+  new_mem = cfd->ConstructNewMemtable(mutable_cf_options, seq);
+  assert(new_mem != nullptr);
+  context->superversion_context.NewSuperVersion();
+  ROCKS_LOG_INFO(immutable_db_options_.info_log,
+                 "[%s] New memtable created with log file: #%" PRIu64
+                 ". Immutable memtables: %d.\n",
+                 cfd->GetName().c_str(), next_log_num, num_imm_unflushed);
+  cfd->mem()->ConstructFragmentedRangeTombstones();
+
+  wal_write_mutex_.Lock();
+  cur_wal_number_ = next_log_num;
+  alive_wal_files_.front().number = next_log_num;
+  logs_.front().number = next_log_num;
+  wal_write_mutex_.Unlock();
+
+  for (auto cf : *versions_->GetColumnFamilySet()) {
+    if (cf->IsEmpty()) {
+      cf->SetLogNumber(cur_wal_number_);
+      cf->mem()->SetCreationSeq(versions_->LastSequence());
+    }
+  }
+
+  cfd->mem()->SetNextLogNumber(cur_wal_number_);
+  cfd->imm()->Add(cfd->mem(), &context->memtables_to_free_);
+  new_mem->Ref();
+  cfd->SetMemtable(new_mem);
+  InstallSuperVersionAndScheduleWork(cfd, &context->superversion_context);
+  NotifyOnMemTableSealed(cfd, memtable_info);
+  return Status::OK();
+}
+#endif  // ROCKSDB_CLOUD
+
 Status DBImpl::SwitchMemtable(ColumnFamilyData* cfd, WriteContext* context,
                               ReadOnlyMemTable* new_imm,
                               SequenceNumber last_seqno) {

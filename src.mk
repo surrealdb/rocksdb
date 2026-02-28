@@ -353,6 +353,27 @@ LIB_SOURCES_ASM =
 LIB_SOURCES_C =
 endif
 
+CLOUD_SOURCES =                                                 \
+  cloud/cloud_file_system.cc                                    \
+  cloud/cloud_file_system_impl.cc                               \
+  cloud/cloud_storage_provider.cc                               \
+  cloud/cloud_log_controller.cc                                 \
+  cloud/cloud_manifest.cc                                       \
+  cloud/cloud_scheduler.cc                                      \
+  cloud/cloud_file_deletion_scheduler.cc                        \
+  cloud/db_cloud_impl.cc                                        \
+  cloud/manifest_reader.cc                                      \
+  cloud/purge.cc                                                \
+  db/db_impl/replication_codec.cc                               \
+  db/replication_epoch_edit.cc                                   \
+
+CLOUD_TEST_SOURCES =                                            \
+  cloud/db_cloud_test.cc                                        \
+  cloud/cloud_file_system_test.cc                               \
+  cloud/cloud_manifest_test.cc                                  \
+  cloud/cloud_scheduler_test.cc                                 \
+  cloud/replication_test.cc                                      \
+
 WITH_FAISS_LIB_SOURCES = \
   utilities/secondary_index/faiss_ivf_index.cc                  \
 

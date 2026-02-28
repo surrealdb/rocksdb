@@ -31,6 +31,10 @@
 #include "util/concurrent_task_limiter_impl.h"
 #include "util/udt_util.h"
 
+#ifdef ROCKSDB_CLOUD
+#include "db/db_impl/replication_codec.h"
+#endif  // ROCKSDB_CLOUD
+
 namespace ROCKSDB_NAMESPACE {
 
 bool DBImpl::EnoughRoomForCompaction(
@@ -2409,12 +2413,17 @@ Status DBImpl::FlushMemTable(ColumnFamilyData* cfd,
                              bool entered_write_thread) {
   // This method should not be called if atomic_flush is true.
   assert(!immutable_db_options_.atomic_flush);
+#ifdef ROCKSDB_CLOUD
+  assert(!immutable_db_options_.replication_log_listener);
+#endif  // ROCKSDB_CLOUD
+#ifndef ROCKSDB_CLOUD
   if (!flush_options.wait && write_controller_.IsStopped()) {
     std::ostringstream oss;
     oss << "Writes have been stopped, thus unable to perform manual flush. "
            "Please try again later after writes are resumed";
     return Status::TryAgain(oss.str());
   }
+#endif  // ROCKSDB_CLOUD
   Status s;
   if (!flush_options.allow_write_stall) {
     bool flush_needed = true;
@@ -2559,12 +2568,14 @@ Status DBImpl::AtomicFlushMemTables(
     const autovector<ColumnFamilyData*>& provided_candidate_cfds,
     bool entered_write_thread) {
   assert(immutable_db_options_.atomic_flush);
+#ifndef ROCKSDB_CLOUD
   if (!flush_options.wait && write_controller_.IsStopped()) {
     std::ostringstream oss;
     oss << "Writes have been stopped, thus unable to perform manual flush. "
            "Please try again later after writes are resumed";
     return Status::TryAgain(oss.str());
   }
+#endif  // ROCKSDB_CLOUD
   Status s;
   autovector<ColumnFamilyData*> candidate_cfds;
   if (provided_candidate_cfds.empty()) {
@@ -2628,7 +2639,15 @@ Status DBImpl::AtomicFlushMemTables(
     }
     WaitForPendingWrites();
 
+#ifdef ROCKSDB_CLOUD
+    if (immutable_db_options_.replication_log_listener) {
+      SelectColumnFamiliesForAtomicFlush(&cfds);
+    } else {
+      SelectColumnFamiliesForAtomicFlush(&cfds, candidate_cfds, flush_reason);
+    }
+#else
     SelectColumnFamiliesForAtomicFlush(&cfds, candidate_cfds, flush_reason);
+#endif  // ROCKSDB_CLOUD
 
     // Unref the newly generated candidate cfds (when not provided) in
     // `candidate_cfds`
@@ -2638,13 +2657,34 @@ Status DBImpl::AtomicFlushMemTables(
       }
     }
 
+#ifdef ROCKSDB_CLOUD
+    MemTableSwitchRecord mem_switch_record;
+    std::string replication_sequence;
+    if (immutable_db_options_.replication_log_listener && !cfds.empty()) {
+      mem_switch_record.next_log_num = versions_->NewFileNumber();
+      replication_sequence = RecordMemTableSwitch(
+          immutable_db_options_.replication_log_listener,
+          mem_switch_record);
+    }
+#endif  // ROCKSDB_CLOUD
+
     for (auto cfd : cfds) {
       if (cfd->mem()->IsEmpty() && cached_recoverable_state_empty_.load() &&
           !IsRecoveryFlush(flush_reason)) {
         continue;
       }
       cfd->Ref();
+#ifdef ROCKSDB_CLOUD
+      if (immutable_db_options_.replication_log_listener) {
+        s = SwitchMemtableWithoutCreatingWAL(cfd, &context,
+                                             mem_switch_record.next_log_num,
+                                             replication_sequence);
+      } else {
+        s = SwitchMemtable(cfd, &context);
+      }
+#else
       s = SwitchMemtable(cfd, &context);
+#endif  // ROCKSDB_CLOUD
       cfd->UnrefAndTryDelete();
       if (!s.ok()) {
         break;

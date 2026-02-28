@@ -302,6 +302,20 @@ class StackableDB : public DB {
     return db_->ReleaseSnapshot(snapshot);
   }
 
+#ifdef ROCKSDB_CLOUD
+  // RocksDB-Cloud contribution begin
+  Status GetSuperSnapshots(
+      const std::vector<ColumnFamilyHandle*>& column_families,
+      std::vector<const Snapshot*>* snapshots) override {
+    return db_->GetSuperSnapshots(column_families, snapshots);
+  }
+  // RocksDB-Cloud contribution end
+
+  SequenceNumber GetIteratorSequenceNumber(Iterator* iterator) override {
+    return db_->GetIteratorSequenceNumber(iterator);
+  }
+#endif  // ROCKSDB_CLOUD
+
   using DB::GetMapProperty;
   using DB::GetProperty;
   bool GetProperty(ColumnFamilyHandle* column_family, const Slice& property,
@@ -607,6 +621,35 @@ class StackableDB : public DB {
   }
 
   Status Resume() override { return db_->Resume(); }
+
+#ifdef ROCKSDB_CLOUD
+  Status ApplyReplicationLogRecord(ReplicationLogRecord record,
+                                   std::string replication_sequence,
+                                   CFOptionsFactory cf_options_factory,
+                                   uint64_t snapshot_replication_epoch,
+                                   ApplyReplicationLogRecordInfo* info,
+                                   unsigned flags) override {
+    return db_->ApplyReplicationLogRecord(
+        record, replication_sequence, std::move(cf_options_factory),
+        snapshot_replication_epoch, info, flags);
+  }
+
+  Status GetPersistedReplicationSequence(std::string* out) override {
+    return db_->GetPersistedReplicationSequence(out);
+  }
+  Status GetManifestUpdateSequence(uint64_t* out) override {
+    return db_->GetManifestUpdateSequence(out);
+  }
+
+  void NewManifestOnNextUpdate() override { db_->NewManifestOnNextUpdate(); }
+  void UpdateReplicationEpoch(uint64_t next_replication_epoch) override {
+    db_->UpdateReplicationEpoch(next_replication_epoch);
+  }
+
+  uint64_t GetNextFileNumber() const override {
+    return db_->GetNextFileNumber();
+  }
+#endif  // ROCKSDB_CLOUD
 
  protected:
   DB* db_;

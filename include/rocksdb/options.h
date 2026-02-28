@@ -348,6 +348,21 @@ struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
   // Default: nullptr
   std::shared_ptr<SstPartitionerFactory> sst_partitioner_factory = nullptr;
 
+#ifdef ROCKSDB_CLOUD
+  // Disable automatic flush (exceed `write_buffer_size` limit). Manual flush
+  // (including exceeding `db_write_buffer_size` limit) can still be issued.
+  //
+  // Dynamically changeable through SetOptions() API
+  // Default: false, auto flush is enabled
+  bool disable_auto_flush = false;
+
+  // No write stall will be triggered if true.
+  //
+  // Dynamically changeable through SetOptions() API
+  // Default: false, write stall will be enabled
+  bool disable_write_stall = false;
+#endif  // ROCKSDB_CLOUD
+
   // RocksDB will try to flush the current memtable after the number of range
   // deletions is >= this limit. For workloads with many range
   // deletions, limiting the number of range deletions in memtable can help
@@ -565,6 +580,72 @@ class CompactionService : public Customizable {
 
   ~CompactionService() override = default;
 };
+
+#ifdef ROCKSDB_CLOUD
+class PreReleaseCallback;
+
+struct ReplicationLogRecord {
+  enum Type { kMemtableWrite, kMemtableSwitch, kManifestWrite };
+  Type type;
+  std::string contents;
+  // Only set if type == kManifestWrite.
+  // Corresponds to the last sequence number committed to the manifest before
+  // the current replication log record is applied.
+  std::optional<SequenceNumber> last_durable_sequence_preapply;
+};
+
+// ReplicationLogListener provides a mechanism to implement physical replication
+// in RocksDB. A leader registers the ReplicationLogListener through which it
+// captures the replication events, which are then applied on the follower
+// using DB::ApplyReplicationLogRecord().
+//
+// What is replicated:
+// * Manifest writes (LSM trees of leader and follower are identical).
+// * Memtable writes.
+// * Memtable switches.
+//
+// S3 files are not replicated. Follower needs to be able to locate the
+// leader's SST files, usually done by overriding its Env.
+//
+// The support for physical replication is experimental and currently does not
+// support any of the following options:
+// * unordered_write
+// * enable_pipelined_write
+// * two_write_queues
+// * write-ahead logging (WriteOptions::disableWAL needs to be true).
+//   Replication log provides write durability.
+//
+// In addition, atomic_flush needs to be true and any manual Flush() call will
+// flush all the existing column families.
+//
+// Follower DB should not be written to and compaction and flushes should be
+// disabled. The only changes to its internal state should happen through
+// ApplyReplicationLogRecord().
+class ReplicationLogListener {
+ public:
+  virtual ~ReplicationLogListener() = default;
+
+  // Important: OnReplicationLogRecord needs to be thread safe. More concretely,
+  // kMemtableWrite and kMemtableSwitch will all be issued from the same thread,
+  // but might be issued concurrently with kManifestWrite.
+  //
+  // Returns a replication log sequence number. This is used on restart, where
+  // the database needs to re-apply all replication log records since
+  // DB::GetPersistedReplicationSequence() (non-inclusive).
+  virtual std::string OnReplicationLogRecord(ReplicationLogRecord record) = 0;
+};
+
+class ReplicationEpochExtractor {
+ public:
+  virtual ~ReplicationEpochExtractor() = default;
+
+  // It's required that replication sequence contains an epoch number, which is
+  // an 8 bytes integer bumped whenever a new leader is elected.
+  //
+  // Returns replication epoch encoded in replication sequence.
+  virtual uint64_t EpochOfReplicationSequence(Slice replication_seq) = 0;
+};
+#endif  // ROCKSDB_CLOUD
 
 struct DBOptions {
   // The function recovers options to the option as in version 4.6.
@@ -1670,6 +1751,23 @@ struct DBOptions {
   // Default: kNonVolatileBlockTier
   CacheTier lowest_used_cache_tier = CacheTier::kNonVolatileBlockTier;
 
+#ifdef ROCKSDB_CLOUD
+  // See comments above ReplicationLogListener class definition.
+  // Status: Experimental.
+  std::shared_ptr<ReplicationLogListener> replication_log_listener = nullptr;
+
+  // See comments above ReplicationEpochExtractor class definition.
+  // Status: Experimental.
+  std::shared_ptr<ReplicationEpochExtractor> replication_epoch_extractor =
+      nullptr;
+
+  // Maximum number of replication epochs to maintain in manifest file.
+  // Replication epoch is extracted from persisted replication sequence.
+  // This is used to help detect divergence when recovering local replication
+  // log in leader follower mode.
+  uint32_t max_num_replication_epochs = 100;
+#endif  // ROCKSDB_CLOUD
+
   // DEPRECATED: This option might be removed in a future release.
   //
   // If set to false, when compaction or flush sees a SingleDelete followed by
@@ -2354,6 +2452,11 @@ struct WriteOptions {
   //
   // Default: false
   bool low_pri = false;
+
+#ifdef ROCKSDB_CLOUD
+  // See comments for PreReleaseCallback
+  PreReleaseCallback* pre_release_callback = nullptr;
+#endif  // ROCKSDB_CLOUD
 
   // If true, this writebatch will maintain the last insert positions of each
   // memtable as hints in concurrent write. It can improve write performance

@@ -18,6 +18,9 @@
 #include "db/blob/blob_file_addition.h"
 #include "db/blob/blob_file_garbage.h"
 #include "db/dbformat.h"
+#ifdef ROCKSDB_CLOUD
+#include "db/replication_epoch_edit.h"
+#endif  // ROCKSDB_CLOUD
 #include "db/wal_edit.h"
 #include "memory/arena.h"
 #include "port/malloc.h"
@@ -60,6 +63,12 @@ enum Tag : uint32_t {
   kBlobFileAddition = 400,
   kBlobFileGarbage,
 
+#ifdef ROCKSDB_CLOUD
+  // RocksDB-Cloud additions to the manifest
+  kReplicationSequence = 720,
+  kManifestUpdateSequence = 721,
+#endif  // ROCKSDB_CLOUD
+
   // Mask for an unidentified tag from the future which can be safely ignored.
   kTagSafeIgnoreMask = 1 << 13,
 
@@ -74,6 +83,11 @@ enum Tag : uint32_t {
   kWalDeletion2,
   kPersistUserDefinedTimestamps,
   kSubcompactionProgress,
+
+#ifdef ROCKSDB_CLOUD
+  // RocksDB-Cloud forward compatible records
+  kReplicationEpochAdd = ((1 << 16) | kTagSafeIgnoreMask),
+#endif  // ROCKSDB_CLOUD
 };
 
 enum SubcompactionProgressPerLevelCustomTag : uint32_t {
@@ -769,6 +783,38 @@ class VersionEdit {
   bool HasLastSequence() const { return has_last_sequence_; }
   SequenceNumber GetLastSequence() const { return last_sequence_; }
 
+#ifdef ROCKSDB_CLOUD
+  void SetReplicationSequence(std::string sequence) {
+    has_replication_sequence_ = true;
+    replication_sequence_ = std::move(sequence);
+  }
+  bool HasReplicationSequence() const { return has_replication_sequence_; }
+  const std::string& GetReplicationSequence() const {
+    return replication_sequence_;
+  }
+
+  void SetManifestUpdateSequence(uint64_t sequence) {
+    has_manifest_update_sequence_ = true;
+    manifest_update_sequence_ = sequence;
+  }
+  bool HasManifestUpdateSequence() const {
+    return has_manifest_update_sequence_;
+  }
+  uint64_t GetManifestUpdateSequence() const {
+    return manifest_update_sequence_;
+  }
+
+  void AddReplicationEpoch(ReplicationEpochAddition epochAddition) {
+    replication_epoch_additions_.emplace_back(std::move(epochAddition));
+  }
+  const ReplicationEpochAdditions& GetReplicationEpochAdditions() const {
+    return replication_epoch_additions_;
+  }
+  bool HasReplicationEpochAdditions() const {
+    return !replication_epoch_additions_.empty();
+  }
+#endif  // ROCKSDB_CLOUD
+
   // Delete the specified table file from the specified level.
   void DeleteFile(int level, uint64_t file) {
     deleted_files_.emplace(level, file);
@@ -1095,6 +1141,14 @@ class VersionEdit {
 
   bool has_subcompaction_progress_ = false;
   SubcompactionProgress subcompaction_progress_;
+
+#ifdef ROCKSDB_CLOUD
+  std::string replication_sequence_;
+  uint64_t manifest_update_sequence_ = 0;
+  ReplicationEpochAdditions replication_epoch_additions_;
+  bool has_replication_sequence_ = false;
+  bool has_manifest_update_sequence_ = false;
+#endif  // ROCKSDB_CLOUD
 
   // Newly created table files and blob files are eligible for deletion if they
   // are not registered as live files after the background jobs creating them
