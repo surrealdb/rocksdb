@@ -10,7 +10,6 @@
 #include <unordered_map>
 
 #include "cloud/aws/aws_file_system.h"
-#include "cloud/cloud_log_controller_impl.h"
 #include "cloud/cloud_manifest.h"
 #include "cloud/db_cloud_impl.h"
 #include "cloud/filename.h"
@@ -19,7 +18,6 @@
 #include "options/options_helper.h"
 #include "port/likely.h"
 #include "rocksdb/cloud/cloud_file_system_impl.h"
-#include "rocksdb/cloud/cloud_log_controller.h"
 #include "rocksdb/cloud/cloud_storage_provider_impl.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
@@ -33,7 +31,6 @@ namespace ROCKSDB_NAMESPACE {
 
 void CloudFileSystemOptions::Dump(Logger* log) const {
   auto provider = storage_provider.get();
-  auto controller = cloud_log_controller.get();
   Header(log, "                         COptions.cloud_type: %s",
          (provider != nullptr) ? provider->Name() : "Unknown");
   Header(log, "                    COptions.src_bucket_name: %s",
@@ -48,12 +45,8 @@ void CloudFileSystemOptions::Dump(Logger* log) const {
          dest_bucket.GetObjectPath().c_str());
   Header(log, "                 COptions.dest_bucket_region: %s",
          dest_bucket.GetRegion().c_str());
-  Header(log, "                           COptions.log_type: %s",
-         (controller != nullptr) ? controller->Name() : "None");
   Header(log, "               COptions.keep_local_sst_files: %d",
          keep_local_sst_files);
-  Header(log, "               COptions.keep_local_log_files: %d",
-         keep_local_log_files);
   Header(log, "             COptions.server_side_encryption: %d",
          server_side_encryption);
   Header(log, "                  COptions.encryption_key_id: %s",
@@ -305,9 +298,6 @@ const std::unordered_map<std::string, OptionTypeInfo>
         {"keep_local_sst_files",
          {offset_of(&CloudFileSystemOptions::keep_local_sst_files),
           OptionType::kBoolean}},
-        {"keep_local_log_files",
-         {offset_of(&CloudFileSystemOptions::keep_local_log_files),
-          OptionType::kBoolean}},
         {"create_bucket_if_missing",
          {offset_of(&CloudFileSystemOptions::create_bucket_if_missing),
           OptionType::kBoolean}},
@@ -345,20 +335,6 @@ const std::unordered_map<std::string, OptionTypeInfo>
                 static_cast<std::shared_ptr<CloudStorageProvider>*>(addr);
             return CloudStorageProvider::CreateFromString(opts, value,
                                                           provider);
-          }}},
-        {"controller",
-         {offset_of(&CloudFileSystemOptions::cloud_log_controller),
-          OptionType::kConfigurable, OptionVerificationType::kByNameAllowNull,
-          (OptionTypeFlags::kShared | OptionTypeFlags::kCompareLoose |
-           OptionTypeFlags::kCompareNever | OptionTypeFlags::kAllowNull),
-          // Creates a new TableFactory based on value
-          [](const ConfigOptions& opts, const std::string& /*name*/,
-             const std::string& value, void* addr) {
-            auto controller =
-                static_cast<std::shared_ptr<CloudLogController>*>(addr);
-            Status s =
-                CloudLogController::CreateFromString(opts, value, controller);
-            return s;
           }}},
         {"src", OptionTypeInfo::Struct(
                     "src", &bucket_options_type_info,
@@ -463,20 +439,6 @@ int DoRegisterCloudObjects(ObjectLibrary& library, const std::string& arg) {
   count++;
 
   count += CloudFileSystemImpl::RegisterAwsObjects(library, arg);
-
-  // Register the Cloud Log Controllers
-
-  library.AddFactory<CloudLogController>(
-      CloudLogControllerImpl::kKafka(),
-      [](const std::string& /*uri*/, std::unique_ptr<CloudLogController>* guard,
-         std::string* errmsg) {
-        Status s = CloudLogControllerImpl::CreateKafkaController(guard);
-        if (!s.ok()) {
-          *errmsg = s.ToString();
-        }
-        return guard->get();
-      });
-  count++;
 
   return count;
 }

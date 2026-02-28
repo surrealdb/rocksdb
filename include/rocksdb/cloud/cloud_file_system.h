@@ -29,7 +29,6 @@ class S3Client;
 namespace ROCKSDB_NAMESPACE {
 
 class CloudFileSystem;
-class CloudLogController;
 class CloudManifest;
 class CloudStorageProvider;
 
@@ -40,15 +39,6 @@ enum CloudType : unsigned char {
   kCloudAzure = 0x3,      // Microsoft Azure
   kCloudRackspace = 0x4,  // Rackspace
   kCloudEnd = 0x5,
-};
-
-enum LogType : unsigned char {
-  kLogNone = 0x0,  // Not really a log env
-  // Important: Kinesis integration currently has a known issue and is not
-  // supported, see https://github.com/rockset/rocksdb-cloud/issues/35
-  kLogKinesis = 0x1,  // Kinesis
-  kLogKafka = 0x2,    // Kafka
-  kLogEnd = 0x3,
 };
 
 // Type of AWS access credentials
@@ -98,17 +88,6 @@ class AwsCloudAccessCredentials {
 using S3ClientFactory = std::function<std::shared_ptr<Aws::S3::S3Client>(
     const std::shared_ptr<Aws::Auth::AWSCredentialsProvider>&,
     const Aws::Client::ClientConfiguration&)>;
-
-// Defines parameters required to connect to Kafka
-class KafkaLogOptions {
- public:
-  // The config parameters for the kafka client. At a bare minimum,
-  // there needs to be at least one entry in this map that lists the
-  // kafka brokers. That entry is of the type
-  //  ("metadata.broker.list", "kafka1.rockset.com,kafka2.rockset.com"
-  //
-  std::unordered_map<std::string, std::string> client_config_params;
-};
 
 enum class CloudRequestOpType {
   kReadOp,
@@ -199,11 +178,6 @@ class CloudFileSystemOptions {
   // Specify the type of cloud-service to use. Deprecated.
   CloudType cloud_type;
 
-  // If keep_local_log_files is false, this specifies what service to use
-  // for storage of write-ahead log.
-  LogType log_type;
-  std::shared_ptr<CloudLogController> cloud_log_controller;
-
   // Specifies the class responsible for accessing objects in the cloud.
   // A null value indicates that the default storage provider based on
   // the cloud fs be used.
@@ -216,9 +190,6 @@ class CloudFileSystemOptions {
   // If present, s3_client_factory will be used to create S3Client instances
   S3ClientFactory s3_client_factory;
 
-  // Only used if keep_local_log_files is true and log_type is kKafka.
-  KafkaLogOptions kafka_log_options;
-
   // If true,  then sst files are stored locally and uploaded to the cloud in
   // the background. On restart, all files from the cloud that are not present
   // locally are downloaded.
@@ -227,13 +198,6 @@ class CloudFileSystemOptions {
   //           data from the cloud.
   // Default:  false
   bool keep_local_sst_files;
-
-  // If true,  then .log and MANIFEST files are stored in a local file system.
-  //           they are not uploaded to any cloud logging system.
-  // If false, then .log and MANIFEST files are not stored locally, and are
-  //           stored in a cloud-logging system like Kinesis or Kafka.
-  // Default:  true
-  bool keep_local_log_files;
 
   // This feature is obsolete. We upload MANIFEST to the cloud on every write.
   // uint64_t manifest_durable_periodicity_millis;
@@ -394,8 +358,7 @@ class CloudFileSystemOptions {
 
   CloudFileSystemOptions(
       CloudType _cloud_type = CloudType::kCloudAws,
-      LogType _log_type = LogType::kLogKafka,
-      bool _keep_local_sst_files = false, bool _keep_local_log_files = true,
+      bool _keep_local_sst_files = false,
       uint64_t _purger_periodicity_millis = 10 * 60 * 1000,
       bool _validate_filesize = true,
       std::shared_ptr<CloudRequestCallback> _cloud_request_callback = nullptr,
@@ -412,9 +375,7 @@ class CloudFileSystemOptions {
       std::string _cookie_on_open = "", std::string _new_cookie_on_open = "",
       bool _delete_cloud_invisible_files_on_open = true,
       std::chrono::seconds _cloud_file_deletion_delay = std::chrono::hours(1))
-      : log_type(_log_type),
-        keep_local_sst_files(_keep_local_sst_files),
-        keep_local_log_files(_keep_local_log_files),
+      : keep_local_sst_files(_keep_local_sst_files),
         purger_periodicity_millis(_purger_periodicity_millis),
         validate_filesize(_validate_filesize),
         cloud_request_callback(_cloud_request_callback),

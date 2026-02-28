@@ -438,7 +438,7 @@ if(WITH_CLOUD)
   add_definitions(-DROCKSDB_CLOUD)
   option(WITH_AWS "Build with AWS support" OFF)
   if(WITH_AWS)
-    find_package(AWSSDK REQUIRED COMPONENTS s3 transfer kinesis)
+    find_package(AWSSDK REQUIRED COMPONENTS s3 transfer)
     add_definitions(-DHAS_AWS_SDK -DUSE_AWS)
     include_directories(${AWSSDK_INCLUDE_DIRS})
     list(APPEND THIRDPARTY_LIBS ${AWSSDK_LIBRARIES})
@@ -1135,7 +1135,6 @@ if(WITH_CLOUD)
     cloud/cloud_file_system.cc
     cloud/cloud_file_system_impl.cc
     cloud/cloud_storage_provider.cc
-    cloud/cloud_log_controller.cc
     cloud/cloud_manifest.cc
     cloud/cloud_scheduler.cc
     cloud/cloud_file_deletion_scheduler.cc
@@ -1150,8 +1149,6 @@ if(WITH_CLOUD)
     set(CLOUD_AWS_SOURCES
       cloud/aws/aws_file_system.cc
       cloud/aws/aws_s3.cc
-      cloud/aws/aws_kinesis.cc
-      cloud/aws/aws_kafka.cc
       cloud/aws/aws_retry.cc
     )
     list(APPEND SOURCES ${CLOUD_AWS_SOURCES})

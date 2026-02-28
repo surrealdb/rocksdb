@@ -6,8 +6,6 @@
 #include <aws/core/Aws.h>
 #endif
 
-#include "cloud/cloud_log_controller_impl.h"
-#include "rocksdb/cloud/cloud_log_controller.h"
 #include "rocksdb/cloud/cloud_storage_provider.h"
 #include "rocksdb/cloud/cloud_storage_provider_impl.h"
 #include "rocksdb/convenience.h"
@@ -36,7 +34,6 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   ConfigOptions config_options;
   CloudFileSystemOptions copts, copy;
   copts.keep_local_sst_files = false;
-  copts.keep_local_log_files = false;
   copts.create_bucket_if_missing = false;
   copts.validate_filesize = false;
   copts.skip_dbid_verification = false;
@@ -50,7 +47,6 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   ASSERT_OK(copts.Serialize(config_options, &str));
   ASSERT_OK(copy.Configure(config_options, str));
   ASSERT_FALSE(copy.keep_local_sst_files);
-  ASSERT_FALSE(copy.keep_local_log_files);
   ASSERT_FALSE(copy.create_bucket_if_missing);
   ASSERT_FALSE(copy.validate_filesize);
   ASSERT_FALSE(copy.skip_dbid_verification);
@@ -62,7 +58,6 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
 
   // Now try a different value
   copts.keep_local_sst_files = true;
-  copts.keep_local_log_files = true;
   copts.create_bucket_if_missing = true;
   copts.validate_filesize = true;
   copts.skip_dbid_verification = true;
@@ -75,7 +70,6 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   ASSERT_OK(copts.Serialize(config_options, &str));
   ASSERT_OK(copy.Configure(config_options, str));
   ASSERT_TRUE(copy.keep_local_sst_files);
-  ASSERT_TRUE(copy.keep_local_log_files);
   ASSERT_TRUE(copy.create_bucket_if_missing);
   ASSERT_TRUE(copy.validate_filesize);
   ASSERT_TRUE(copy.skip_dbid_verification);
@@ -200,45 +194,6 @@ TEST(CloudFileSystemTest, ConfigureS3Provider) {
   ASSERT_NE(cfs->GetStorageProvider(), nullptr);
   ASSERT_STREQ(cfs->GetStorageProvider()->Name(),
                CloudStorageProviderImpl::kS3());
-#endif
-}
-
-// Test is disabled until we have a mock provider and authentication issues are
-// resolved
-TEST(CloudFileSystemTest, DISABLED_ConfigureKinesisController) {
-  std::unique_ptr<CloudFileSystem> cfs;
-
-  ConfigOptions config_options;
-  Status s = CloudFileSystemEnv::CreateFromString(
-      config_options, "provider=mock; controller=kinesis", &cfs);
-  ASSERT_NOK(s);
-  ASSERT_EQ(cfs, nullptr);
-
-#ifdef USE_AWS
-  ASSERT_OK(CloudFileSystemEnv::CreateFromString(
-      config_options, "id=aws; controller=kinesis; TEST=dbcloud:/test", &cfs));
-  ASSERT_STREQ(cfs->Name(), "aws");
-  ASSERT_NE(cfs->GetCloudFileSystemOptions().cloud_log_controller, nullptr);
-  ASSERT_STREQ(cfs->GetCloudFileSystemOptions().cloud_log_controller->Name(),
-               CloudLogControllerImpl::kKinesis());
-#endif
-}
-
-TEST(CloudFileSystemTest, ConfigureKafkaController) {
-  std::unique_ptr<CloudFileSystem> cfs;
-
-  ConfigOptions config_options;
-  Status s = CloudFileSystemEnv::CreateFromString(
-      config_options, "provider=mock; controller=kafka", &cfs);
-#ifdef USE_KAFKA
-  ASSERT_OK(s);
-  ASSERT_NE(cfs, nullptr);
-  ASSERT_NE(cfs->GetCloudFileSystemOptions().cloud_log_controller, nullptr);
-  ASSERT_STREQ(cfs->GetCloudFileSystemOptions().cloud_log_controller->Name(),
-               CloudLogControllerImpl::kKafka());
-#else
-  ASSERT_NOK(s);
-  ASSERT_EQ(cfs, nullptr);
 #endif
 }
 
