@@ -2701,6 +2701,10 @@ void rocksdb_enable_file_deletions(rocksdb_t* db, char** errptr) {
   SaveError(errptr, db->rep->EnableFileDeletions());
 }
 
+void rocksdb_resume(rocksdb_t* db, char** errptr) {
+  SaveError(errptr, db->rep->Resume());
+}
+
 void rocksdb_destroy_db(const rocksdb_options_t* options, const char* name,
                         char** errptr) {
   SaveError(errptr, DestroyDB(name, options->rep));
