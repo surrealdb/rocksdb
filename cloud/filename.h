@@ -128,6 +128,7 @@ const std::string pathsep = "/";
 // types of rocksdb files
 const std::string sst = ".sst";
 const std::string ldb = ".ldb";
+const std::string blob = ".blob";
 const std::string log = ".log";
 
 // Is this a sst file, i.e. ends in ".sst" or ".ldb"
@@ -138,6 +139,18 @@ inline bool IsSstFile(const std::string& pathname) {
   const char* ptr = pathname.c_str() + pathname.size() - sst.size();
   if ((memcmp(ptr, sst.c_str(), sst.size()) == 0) ||
       (memcmp(ptr, ldb.c_str(), ldb.size()) == 0)) {
+    return true;
+  }
+  return false;
+}
+
+// Is this a blob file, i.e. ends in ".blob"
+inline bool IsBlobFile(const std::string& pathname) {
+  if (pathname.size() < blob.size()) {
+    return false;
+  }
+  const char* ptr = pathname.c_str() + pathname.size() - blob.size();
+  if (memcmp(ptr, blob.c_str(), blob.size()) == 0) {
     return true;
   }
   return false;
@@ -200,6 +213,7 @@ inline bool IsCloudManifestFile(const std::string& pathname) {
 
 enum class RocksDBFileType {
   kSstFile,
+  kBlobFile,
   kLogFile,
   kManifestFile,
   kIdentityFile,
@@ -207,14 +221,18 @@ enum class RocksDBFileType {
 };
 
 // Determine type of a file based on filename. Rules:
-// 1. filename ends with a .sst is a sst file.
-// 2. filename ends with .log or starts with MANIFEST is a logfile
-// 3. filename starts with MANIFEST is a manifest file
-// 3. filename starts with IDENTITY is a ID file
+// 1. filename ends with .sst or .ldb is a sst file.
+// 2. filename ends with .blob is a blob file.
+// 3. filename ends with .log is a logfile
+// 4. filename starts with MANIFEST is a manifest file
+// 5. filename starts with IDENTITY is a ID file
 inline RocksDBFileType GetFileType(const std::string& fname_with_epoch) {
   auto fname = RemoveEpoch(fname_with_epoch);
   if (IsSstFile(fname)) {
     return RocksDBFileType::kSstFile;
+  }
+  if (IsBlobFile(fname)) {
+    return RocksDBFileType::kBlobFile;
   }
   if (IsLogFile(fname)) {
     return RocksDBFileType::kLogFile;

@@ -1601,6 +1601,13 @@ if(WITH_TESTS)
         utilities/write_batch_with_index/write_batch_with_index_test.cc
 	${PLUGIN_TESTS}
     )
+    if(WITH_CLOUD)
+      list(APPEND TESTS
+        cloud/cloud_file_system_test.cc
+        cloud/cloud_manifest_test.cc
+        cloud/db_cloud_test.cc
+      )
+    endif()
   endif()
 
   set(TESTUTIL_SOURCE

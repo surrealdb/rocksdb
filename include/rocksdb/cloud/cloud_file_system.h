@@ -507,22 +507,27 @@ class CloudFileSystem : public FileSystem {
 
   // Find the list of live files based on CloudManifest and Manifest in local db
   //
-  // For the returned filepath in `live_sst_files` and `manifest_file`, we only
-  // include the basename of the filepath but not the directory prefix to the
-  // file
-  virtual IOStatus FindAllLiveFiles(const std::string& local_dbname,
-                                    std::vector<std::string>* live_sst_files,
-                                    std::string* manifest_file) = 0;
+  // For the returned filepath in `live_sst_files`, `live_blob_files`, and
+  // `manifest_file`, we only include the basename of the filepath but not the
+  // directory prefix to the file.
+  // `live_blob_files` is optional and may be nullptr.
+  virtual IOStatus FindAllLiveFiles(
+      const std::string& local_dbname,
+      std::vector<std::string>* live_sst_files,
+      std::vector<std::string>* live_blob_files,
+      std::string* manifest_file) = 0;
 
   // Read the given manifest file (either the one used in the database or a
   // copy) and populate live_sst_files with the list of all SST files that it
-  //
-  // references. Unlike FindAllLiveFiles, this method doesn't resolve the
+  // references, and optionally live_blob_files with all blob files.
+  // Unlike FindAllLiveFiles, this method doesn't resolve the
   // manifest name from the cloud manifest and also doesn't pull the manifest
   // (i.e., it needs to be present locally).
+  // `live_blob_files` is optional and may be nullptr.
   virtual IOStatus FindLiveFilesFromLocalManifest(
       const std::string& manifest_file,
-      std::vector<std::string>* live_sst_files) = 0;
+      std::vector<std::string>* live_sst_files,
+      std::vector<std::string>* live_blob_files = nullptr) = 0;
 
   // Apply cloud manifest delta to in-memory cloud manifest. Does not change the
   // on-disk state.

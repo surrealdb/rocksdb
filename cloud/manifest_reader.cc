@@ -35,7 +35,8 @@ LocalManifestReader::LocalManifestReader(std::shared_ptr<Logger> info_log,
     : info_log_(std::move(info_log)), cfs_(cfs) {}
 
 IOStatus LocalManifestReader::GetLiveFilesLocally(
-    const std::string& local_dbname, std::set<uint64_t>* list) const {
+    const std::string& local_dbname, std::set<uint64_t>* list,
+    std::set<uint64_t>* blob_list) const {
   auto* cfs_impl = static_cast<CloudFileSystemImpl*>(cfs_);
   assert(cfs_impl);
   // cloud manifest should be set in CloudFileSystem, and it should map to local
@@ -63,11 +64,13 @@ IOStatus LocalManifestReader::GetLiveFilesLocally(
         new SequentialFileReader(std::move(file), local_manifest_file));
   }
 
-  return GetLiveFilesFromFileReader(std::move(manifest_file_reader), list);
+  return GetLiveFilesFromFileReader(std::move(manifest_file_reader), list,
+                                    blob_list);
 }
 
 IOStatus LocalManifestReader::GetManifestLiveFiles(
-    const std::string& manifest_file, std::set<uint64_t>* list) const {
+    const std::string& manifest_file, std::set<uint64_t>* list,
+    std::set<uint64_t>* blob_list) const {
   auto* cfs_impl = static_cast<CloudFileSystemImpl*>(cfs_);
   assert(cfs_impl);
 
@@ -84,12 +87,13 @@ IOStatus LocalManifestReader::GetManifestLiveFiles(
         new SequentialFileReader(std::move(file), manifest_file));
   }
 
-  return GetLiveFilesFromFileReader(std::move(manifest_file_reader), list);
+  return GetLiveFilesFromFileReader(std::move(manifest_file_reader), list,
+                                    blob_list);
 }
 
 IOStatus LocalManifestReader::GetLiveFilesFromFileReader(
     std::unique_ptr<SequentialFileReader> file_reader,
-    std::set<uint64_t>* list) const {
+    std::set<uint64_t>* list, std::set<uint64_t>* blob_list) const {
   Status s;
   // create a callback that gets invoked whil looping through the log records
   LogReporter reporter;
@@ -105,6 +109,10 @@ IOStatus LocalManifestReader::GetLiveFilesFromFileReader(
                      std::unordered_map<int,  // level
                                         std::unordered_set<uint64_t>>>
       cf_live_files;
+
+  // keep track of each CF's live blob files
+  std::unordered_map<uint32_t, std::unordered_set<uint64_t>>
+      cf_live_blob_files;
 
   while (reader.ReadRecord(&record, &scratch) && s.ok()) {
     VersionEdit edit;
@@ -135,10 +143,19 @@ IOStatus LocalManifestReader::GetLiveFilesFromFileReader(
       it->second[level].erase(num);
     }
 
+    // Track blob file additions
+    if (blob_list) {
+      for (const auto& blob_file : edit.GetBlobFileAdditions()) {
+        cf_live_blob_files[edit.GetColumnFamily()].insert(
+            blob_file.GetBlobFileNumber());
+      }
+    }
+
     // Removing the files from dropped CF, since we don't mark the files as
     // deleted in Manifest when a CF is dropped,
     if (edit.IsColumnFamilyDrop()) {
       cf_live_files.erase(edit.GetColumnFamily());
+      cf_live_blob_files.erase(edit.GetColumnFamily());
     }
   }
 
@@ -147,6 +164,13 @@ IOStatus LocalManifestReader::GetLiveFilesFromFileReader(
       (void)cf_id;
       (void)level;
       list->insert(level_live_files.begin(), level_live_files.end());
+    }
+  }
+
+  if (blob_list) {
+    for (auto& [cf_id, live_blob_files] : cf_live_blob_files) {
+      (void)cf_id;
+      blob_list->insert(live_blob_files.begin(), live_blob_files.end());
     }
   }
 
@@ -165,7 +189,8 @@ ManifestReader::ManifestReader(std::shared_ptr<Logger> info_log,
 // cloud_manifest object
 //
 IOStatus ManifestReader::GetLiveFiles(const std::string& bucket_path,
-                                      std::set<uint64_t>* list) const {
+                                      std::set<uint64_t>* list,
+                                      std::set<uint64_t>* blob_list) const {
   IOStatus s;
   std::unique_ptr<CloudManifest> cloud_manifest;
   const FileOptions file_opts;
@@ -202,7 +227,7 @@ IOStatus ManifestReader::GetLiveFiles(const std::string& bucket_path,
     file_reader.reset(new SequentialFileReader(std::move(file), manifestFile));
   }
 
-  return GetLiveFilesFromFileReader(std::move(file_reader), list);
+  return GetLiveFilesFromFileReader(std::move(file_reader), list, blob_list);
 }
 
 IOStatus ManifestReader::GetMaxFileNumberFromManifest(FileSystem* fs,

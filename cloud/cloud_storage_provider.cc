@@ -112,7 +112,8 @@ CloudStorageWritableFileImpl::CloudStorageWritableFileImpl(
   auto fname_no_epoch = RemoveEpoch(fname_);
   // Is this a manifest file?
   is_manifest_ = IsManifestFile(fname_no_epoch);
-  assert(IsSstFile(fname_no_epoch) || is_manifest_);
+  assert(IsSstFile(fname_no_epoch) || IsBlobFile(fname_no_epoch) ||
+         is_manifest_);
 
   Log(InfoLogLevel::DEBUG_LEVEL, cfs_->GetLogger(),
       "[%s] CloudWritableFile bucket %s opened local file %s "
