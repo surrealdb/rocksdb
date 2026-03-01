@@ -56,6 +56,7 @@
 #include "rocksdb/cloud/cloud_file_system.h"
 #include "rocksdb/cloud/cloud_optimistic_transaction_db.h"
 #include "rocksdb/cloud/cloud_transaction_db.h"
+#include "rocksdb/cloud/db_cloud.h"
 #ifdef USE_AWS
 #include <aws/core/Aws.h>
 #endif
@@ -8871,12 +8872,15 @@ unsigned char rocksdb_get_into_buffer_cf(
 
 #ifdef ROCKSDB_CLOUD
 
+using ROCKSDB_NAMESPACE::AwsCloudAccessCredentials;
 using ROCKSDB_NAMESPACE::BucketOptions;
+using ROCKSDB_NAMESPACE::CheckpointToCloudOptions;
 using ROCKSDB_NAMESPACE::CloudFileSystem;
 using ROCKSDB_NAMESPACE::CloudFileSystemEnv;
 using ROCKSDB_NAMESPACE::CloudFileSystemOptions;
 using ROCKSDB_NAMESPACE::CloudOptimisticTransactionDB;
 using ROCKSDB_NAMESPACE::CloudTransactionDB;
+using ROCKSDB_NAMESPACE::DBCloud;
 using ROCKSDB_NAMESPACE::FileSystem;
 
 struct rocksdb_cloud_fs_t {
@@ -8891,6 +8895,18 @@ struct rocksdb_cloud_bucket_options_t {
   BucketOptions rep;
 };
 
+struct rocksdb_cloud_db_t {
+  DBCloud* rep;
+};
+
+struct rocksdb_cloud_credentials_t {
+  AwsCloudAccessCredentials rep;
+};
+
+struct rocksdb_cloud_checkpoint_options_t {
+  CheckpointToCloudOptions rep;
+};
+
 struct rocksdb_cloud_otxn_db_t {
   CloudOptimisticTransactionDB* rep;
 };
@@ -8898,6 +8914,46 @@ struct rocksdb_cloud_otxn_db_t {
 struct rocksdb_cloud_txn_db_t {
   CloudTransactionDB* rep;
 };
+
+// AwsCloudAccessCredentials
+
+rocksdb_cloud_credentials_t* rocksdb_cloud_credentials_create() {
+  return new rocksdb_cloud_credentials_t;
+}
+
+void rocksdb_cloud_credentials_destroy(rocksdb_cloud_credentials_t* creds) {
+  delete creds;
+}
+
+void rocksdb_cloud_credentials_initialize_simple(
+    rocksdb_cloud_credentials_t* creds, const char* access_key_id,
+    const char* secret_key) {
+  creds->rep.InitializeSimple(std::string(access_key_id),
+                              std::string(secret_key));
+}
+
+void rocksdb_cloud_credentials_initialize_config(
+    rocksdb_cloud_credentials_t* creds, const char* config_file) {
+  creds->rep.InitializeConfig(std::string(config_file));
+}
+
+void rocksdb_cloud_credentials_set_type(rocksdb_cloud_credentials_t* creds,
+                                        int type) {
+  creds->rep.type = static_cast<ROCKSDB_NAMESPACE::AwsAccessType>(type);
+}
+
+int rocksdb_cloud_credentials_get_type(rocksdb_cloud_credentials_t* creds) {
+  return static_cast<int>(creds->rep.type);
+}
+
+unsigned char rocksdb_cloud_credentials_has_valid(
+    rocksdb_cloud_credentials_t* creds, char** errptr) {
+  Status s = creds->rep.HasValid();
+  if (SaveError(errptr, s)) {
+    return 0;
+  }
+  return 1;
+}
 
 // CloudFileSystemOptions
 
@@ -8919,6 +8975,214 @@ void rocksdb_cloud_fs_options_set_dest_bucket(
   opts->rep.dest_bucket = bucket->rep;
 }
 
+void rocksdb_cloud_fs_options_set_credentials(
+    rocksdb_cloud_fs_options_t* opts, rocksdb_cloud_credentials_t* creds) {
+  opts->rep.credentials = creds->rep;
+}
+
+void rocksdb_cloud_fs_options_set_keep_local_sst_files(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.keep_local_sst_files = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_keep_local_sst_files(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.keep_local_sst_files;
+}
+
+void rocksdb_cloud_fs_options_set_validate_filesize(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.validate_filesize = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_validate_filesize(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.validate_filesize;
+}
+
+void rocksdb_cloud_fs_options_set_server_side_encryption(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.server_side_encryption = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_server_side_encryption(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.server_side_encryption;
+}
+
+void rocksdb_cloud_fs_options_set_create_bucket_if_missing(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.create_bucket_if_missing = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_create_bucket_if_missing(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.create_bucket_if_missing;
+}
+
+void rocksdb_cloud_fs_options_set_run_purger(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.run_purger = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_run_purger(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.run_purger;
+}
+
+void rocksdb_cloud_fs_options_set_resync_on_open(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.resync_on_open = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_resync_on_open(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.resync_on_open;
+}
+
+void rocksdb_cloud_fs_options_set_skip_dbid_verification(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.skip_dbid_verification = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_skip_dbid_verification(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.skip_dbid_verification;
+}
+
+void rocksdb_cloud_fs_options_set_use_aws_transfer_manager(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.use_aws_transfer_manager = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_use_aws_transfer_manager(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.use_aws_transfer_manager;
+}
+
+void rocksdb_cloud_fs_options_set_skip_cloud_files_in_getchildren(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.skip_cloud_files_in_getchildren = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_skip_cloud_files_in_getchildren(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.skip_cloud_files_in_getchildren;
+}
+
+void rocksdb_cloud_fs_options_set_use_direct_io_for_cloud_download(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.use_direct_io_for_cloud_download = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_use_direct_io_for_cloud_download(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.use_direct_io_for_cloud_download;
+}
+
+void rocksdb_cloud_fs_options_set_roll_cloud_manifest_on_open(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.roll_cloud_manifest_on_open = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_roll_cloud_manifest_on_open(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.roll_cloud_manifest_on_open;
+}
+
+void rocksdb_cloud_fs_options_set_delete_cloud_invisible_files_on_open(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.delete_cloud_invisible_files_on_open = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_delete_cloud_invisible_files_on_open(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.delete_cloud_invisible_files_on_open;
+}
+
+void rocksdb_cloud_fs_options_set_purger_periodicity_millis(
+    rocksdb_cloud_fs_options_t* opts, uint64_t val) {
+  opts->rep.purger_periodicity_millis = val;
+}
+
+uint64_t rocksdb_cloud_fs_options_get_purger_periodicity_millis(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.purger_periodicity_millis;
+}
+
+void rocksdb_cloud_fs_options_set_request_timeout_ms(
+    rocksdb_cloud_fs_options_t* opts, uint64_t val) {
+  opts->rep.request_timeout_ms = val;
+}
+
+uint64_t rocksdb_cloud_fs_options_get_request_timeout_ms(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.request_timeout_ms;
+}
+
+void rocksdb_cloud_fs_options_set_number_objects_listed_in_one_iteration(
+    rocksdb_cloud_fs_options_t* opts, int val) {
+  opts->rep.number_objects_listed_in_one_iteration = val;
+}
+
+int rocksdb_cloud_fs_options_get_number_objects_listed_in_one_iteration(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.number_objects_listed_in_one_iteration;
+}
+
+void rocksdb_cloud_fs_options_set_constant_sst_file_size_in_sst_file_manager(
+    rocksdb_cloud_fs_options_t* opts, int64_t val) {
+  opts->rep.constant_sst_file_size_in_sst_file_manager = val;
+}
+
+int64_t
+rocksdb_cloud_fs_options_get_constant_sst_file_size_in_sst_file_manager(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.constant_sst_file_size_in_sst_file_manager;
+}
+
+void rocksdb_cloud_fs_options_set_cloud_file_deletion_delay_secs(
+    rocksdb_cloud_fs_options_t* opts, uint64_t val) {
+  opts->rep.cloud_file_deletion_delay = std::chrono::seconds(val);
+}
+
+uint64_t rocksdb_cloud_fs_options_get_cloud_file_deletion_delay_secs(
+    rocksdb_cloud_fs_options_t* opts) {
+  return static_cast<uint64_t>(
+      opts->rep.cloud_file_deletion_delay.value_or(std::chrono::seconds(0))
+          .count());
+}
+
+void rocksdb_cloud_fs_options_set_encryption_key_id(
+    rocksdb_cloud_fs_options_t* opts, const char* val) {
+  opts->rep.encryption_key_id = std::string(val);
+}
+
+const char* rocksdb_cloud_fs_options_get_encryption_key_id(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.encryption_key_id.c_str();
+}
+
+void rocksdb_cloud_fs_options_set_cookie_on_open(
+    rocksdb_cloud_fs_options_t* opts, const char* val) {
+  opts->rep.cookie_on_open = std::string(val);
+}
+
+const char* rocksdb_cloud_fs_options_get_cookie_on_open(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.cookie_on_open.c_str();
+}
+
+void rocksdb_cloud_fs_options_set_new_cookie_on_open(
+    rocksdb_cloud_fs_options_t* opts, const char* val) {
+  opts->rep.new_cookie_on_open = std::string(val);
+}
+
+const char* rocksdb_cloud_fs_options_get_new_cookie_on_open(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.new_cookie_on_open.c_str();
+}
+
 // CloudBucketOptions
 
 rocksdb_cloud_bucket_options_t* rocksdb_cloud_bucket_options_create() {
@@ -8938,6 +9202,16 @@ void rocksdb_cloud_bucket_options_set_bucket_name(
 const char* rocksdb_cloud_bucket_options_get_bucket_name(
     rocksdb_cloud_bucket_options_t* opts) {
   return opts->rep.GetBucketName().c_str();
+}
+
+void rocksdb_cloud_bucket_options_set_prefix(
+    rocksdb_cloud_bucket_options_t* opts, const char* prefix) {
+  opts->rep.SetBucketPrefix(std::string(prefix));
+}
+
+const char* rocksdb_cloud_bucket_options_get_prefix(
+    rocksdb_cloud_bucket_options_t* opts) {
+  return opts->rep.GetBucketPrefix().c_str();
 }
 
 void rocksdb_cloud_bucket_options_set_region(
@@ -8963,6 +9237,38 @@ const char* rocksdb_cloud_bucket_options_get_object_path(
 unsigned char rocksdb_cloud_bucket_options_is_valid(
     rocksdb_cloud_bucket_options_t* opts) {
   return opts->rep.IsValid();
+}
+
+// CheckpointToCloudOptions
+
+rocksdb_cloud_checkpoint_options_t*
+rocksdb_cloud_checkpoint_options_create() {
+  return new rocksdb_cloud_checkpoint_options_t;
+}
+
+void rocksdb_cloud_checkpoint_options_destroy(
+    rocksdb_cloud_checkpoint_options_t* opts) {
+  delete opts;
+}
+
+void rocksdb_cloud_checkpoint_options_set_thread_count(
+    rocksdb_cloud_checkpoint_options_t* opts, int val) {
+  opts->rep.thread_count = val;
+}
+
+int rocksdb_cloud_checkpoint_options_get_thread_count(
+    rocksdb_cloud_checkpoint_options_t* opts) {
+  return opts->rep.thread_count;
+}
+
+void rocksdb_cloud_checkpoint_options_set_flush_memtable(
+    rocksdb_cloud_checkpoint_options_t* opts, unsigned char val) {
+  opts->rep.flush_memtable = val;
+}
+
+unsigned char rocksdb_cloud_checkpoint_options_get_flush_memtable(
+    rocksdb_cloud_checkpoint_options_t* opts) {
+  return opts->rep.flush_memtable;
 }
 
 // Cloud FS / Env
@@ -9002,6 +9308,149 @@ rocksdb_env_t* rocksdb_cloud_env_create(rocksdb_cloud_fs_t* cfs) {
   result->rep = cloud_env.release();
   result->is_default = false;
   return result;
+}
+
+// DBCloud
+
+rocksdb_cloud_db_t* rocksdb_cloud_db_open(rocksdb_options_t* options,
+                                          const char* name,
+                                          const char* persistent_cache_path,
+                                          uint64_t persistent_cache_size_gb,
+                                          char** errptr) {
+  DBCloud* db;
+  if (SaveError(errptr,
+                DBCloud::Open(options->rep, std::string(name),
+                              std::string(persistent_cache_path),
+                              persistent_cache_size_gb, &db, false))) {
+    return nullptr;
+  }
+  rocksdb_cloud_db_t* result = new rocksdb_cloud_db_t;
+  result->rep = db;
+  return result;
+}
+
+rocksdb_cloud_db_t* rocksdb_cloud_db_open_read_only(
+    rocksdb_options_t* options, const char* name,
+    const char* persistent_cache_path, uint64_t persistent_cache_size_gb,
+    char** errptr) {
+  DBCloud* db;
+  if (SaveError(errptr,
+                DBCloud::Open(options->rep, std::string(name),
+                              std::string(persistent_cache_path),
+                              persistent_cache_size_gb, &db, true))) {
+    return nullptr;
+  }
+  rocksdb_cloud_db_t* result = new rocksdb_cloud_db_t;
+  result->rep = db;
+  return result;
+}
+
+rocksdb_cloud_db_t* rocksdb_cloud_db_open_column_families(
+    const rocksdb_options_t* options, const char* name,
+    const char* persistent_cache_path, uint64_t persistent_cache_size_gb,
+    int num_column_families, const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr) {
+  std::vector<ColumnFamilyDescriptor> column_families;
+  for (int i = 0; i < num_column_families; i++) {
+    column_families.push_back(ColumnFamilyDescriptor(
+        std::string(column_family_names[i]),
+        ColumnFamilyOptions(column_family_options[i]->rep)));
+  }
+
+  DBCloud* db;
+  std::vector<ColumnFamilyHandle*> handles;
+  if (SaveError(errptr,
+                DBCloud::Open(options->rep, std::string(name), column_families,
+                              std::string(persistent_cache_path),
+                              persistent_cache_size_gb, &handles, &db,
+                              false))) {
+    return nullptr;
+  }
+
+  for (size_t i = 0; i < handles.size(); i++) {
+    rocksdb_column_family_handle_t* c_handle =
+        new rocksdb_column_family_handle_t;
+    c_handle->rep = handles[i];
+    c_handle->immortal = false;
+    column_family_handles[i] = c_handle;
+  }
+  rocksdb_cloud_db_t* result = new rocksdb_cloud_db_t;
+  result->rep = db;
+  return result;
+}
+
+rocksdb_cloud_db_t* rocksdb_cloud_db_open_column_families_read_only(
+    const rocksdb_options_t* options, const char* name,
+    const char* persistent_cache_path, uint64_t persistent_cache_size_gb,
+    int num_column_families, const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr) {
+  std::vector<ColumnFamilyDescriptor> column_families;
+  for (int i = 0; i < num_column_families; i++) {
+    column_families.push_back(ColumnFamilyDescriptor(
+        std::string(column_family_names[i]),
+        ColumnFamilyOptions(column_family_options[i]->rep)));
+  }
+
+  DBCloud* db;
+  std::vector<ColumnFamilyHandle*> handles;
+  if (SaveError(errptr,
+                DBCloud::Open(options->rep, std::string(name), column_families,
+                              std::string(persistent_cache_path),
+                              persistent_cache_size_gb, &handles, &db,
+                              true))) {
+    return nullptr;
+  }
+
+  for (size_t i = 0; i < handles.size(); i++) {
+    rocksdb_column_family_handle_t* c_handle =
+        new rocksdb_column_family_handle_t;
+    c_handle->rep = handles[i];
+    c_handle->immortal = false;
+    column_family_handles[i] = c_handle;
+  }
+  rocksdb_cloud_db_t* result = new rocksdb_cloud_db_t;
+  result->rep = db;
+  return result;
+}
+
+void rocksdb_cloud_db_close(rocksdb_cloud_db_t* db) {
+  delete db->rep;
+  delete db;
+}
+
+rocksdb_t* rocksdb_cloud_db_get_base_db(rocksdb_cloud_db_t* db) {
+  rocksdb_t* result = new rocksdb_t;
+  result->rep = db->rep;
+  return result;
+}
+
+void rocksdb_cloud_db_savepoint(rocksdb_cloud_db_t* db, char** errptr) {
+  SaveError(errptr, db->rep->Savepoint());
+}
+
+void rocksdb_cloud_db_checkpoint_to_cloud(
+    rocksdb_cloud_db_t* db, rocksdb_cloud_bucket_options_t* destination,
+    rocksdb_cloud_checkpoint_options_t* options, char** errptr) {
+  SaveError(errptr,
+            db->rep->CheckpointToCloud(destination->rep, options->rep));
+}
+
+char** rocksdb_cloud_db_list_column_families(const rocksdb_options_t* options,
+                                             const char* name, size_t* lencfs,
+                                             char** errptr) {
+  std::vector<std::string> fams;
+  SaveError(errptr, DBCloud::ListColumnFamilies(DBOptions(options->rep),
+                                                std::string(name), &fams));
+
+  *lencfs = fams.size();
+  char** column_families =
+      static_cast<char**>(malloc(sizeof(char*) * fams.size()));
+  for (size_t i = 0; i < fams.size(); i++) {
+    column_families[i] = strdup(fams[i].c_str());
+  }
+  return column_families;
 }
 
 // CloudOptimisticTransactionDB
