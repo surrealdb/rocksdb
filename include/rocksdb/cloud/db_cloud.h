@@ -67,6 +67,7 @@ class DBCloud : public StackableDB {
 
  protected:
   explicit DBCloud(DB* db) : StackableDB(db) {}
+  explicit DBCloud(std::shared_ptr<DB> db) : StackableDB(std::move(db)) {}
 };
 
 }  // namespace ROCKSDB_NAMESPACE

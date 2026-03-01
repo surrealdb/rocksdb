@@ -48,15 +48,15 @@ class OptimisticTransactionDBImpl : public OptimisticTransactionDB {
       const OptimisticTransactionDBOptions& occ_options)
       : OptimisticTransactionDB(std::move(db)),
         validate_policy_(occ_options.validate_policy) {
-    if (validate_policy_ == OccValidationPolicy::kValidateParallel) {
-      auto bucketed_locks = occ_options.shared_lock_buckets;
-      if (!bucketed_locks) {
-        uint32_t bucket_count = std::max(16u, occ_options.occ_lock_buckets);
-        bucketed_locks = MakeSharedOccLockBuckets(bucket_count);
-      }
-      bucketed_locks_ = static_cast_with_check<OccLockBucketsImplBase>(
-          std::move(bucketed_locks));
-    }
+    InitLockBuckets(occ_options);
+  }
+
+  explicit OptimisticTransactionDBImpl(
+      std::shared_ptr<DB> db,
+      const OptimisticTransactionDBOptions& occ_options)
+      : OptimisticTransactionDB(std::move(db)),
+        validate_policy_(occ_options.validate_policy) {
+    InitLockBuckets(occ_options);
   }
 
   ~OptimisticTransactionDBImpl() override = default;
@@ -88,6 +88,18 @@ class OptimisticTransactionDBImpl : public OptimisticTransactionDB {
   }
 
  private:
+  void InitLockBuckets(const OptimisticTransactionDBOptions& occ_options) {
+    if (validate_policy_ == OccValidationPolicy::kValidateParallel) {
+      auto bucketed_locks = occ_options.shared_lock_buckets;
+      if (!bucketed_locks) {
+        uint32_t bucket_count = std::max(16u, occ_options.occ_lock_buckets);
+        bucketed_locks = MakeSharedOccLockBuckets(bucket_count);
+      }
+      bucketed_locks_ = static_cast_with_check<OccLockBucketsImplBase>(
+          std::move(bucketed_locks));
+    }
+  }
+
   std::shared_ptr<OccLockBucketsImplBase> bucketed_locks_;
 
   const OccValidationPolicy validate_policy_;
