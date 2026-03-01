@@ -153,6 +153,11 @@ class CloudFileSystemImpl : public CloudFileSystem {
   // A map from a dbid to the list of all its parent dbids.
   typedef std::map<std::string, std::vector<std::string>> DbidParents;
 
+  // Given a full dbid chain (e.g. "aaacloudbbbcloudccc"), split by
+  // DBID_SEPARATOR and reconstruct cumulative registered ancestor dbids:
+  //   ["aaa", "aaacloudbbb", "aaacloudbbbcloudccc"]
+  static std::vector<std::string> BuildAncestorDbids(const std::string& dbid);
+
   IOStatus FindObsoleteFiles(const std::string& bucket_name_prefix,
                              std::vector<std::string>* pathnames);
   IOStatus FindObsoleteDbid(const std::string& bucket_name_prefix,

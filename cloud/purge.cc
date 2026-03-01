@@ -2,18 +2,17 @@
 // Copyright (c) 2024-present, SurrealDB Ltd.  All rights reserved.
 #ifndef ROCKSDB_LITE
 
-#include "cloud/purge.h"
-
 #include <chrono>
 #include <set>
 
-#include "rocksdb/cloud/cloud_file_system_impl.h"
 #include "cloud/db_cloud_impl.h"
 #include "cloud/filename.h"
 #include "cloud/manifest_reader.h"
 #include "file/filename.h"
+#include "rocksdb/cloud/cloud_file_system_impl.h"
 #include "rocksdb/cloud/cloud_storage_provider.h"
 #include "rocksdb/db.h"
+#include "rocksdb/env.h"
 #include "rocksdb/options.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -21,11 +20,37 @@ namespace ROCKSDB_NAMESPACE {
 // A map from a dbid to the list of all its parent dbids.
 typedef std::map<std::string, std::vector<std::string>> DbidParents;
 
+std::vector<std::string> CloudFileSystemImpl::BuildAncestorDbids(
+    const std::string& dbid) {
+  const std::string delimiter(DBID_SEPARATOR);
+  std::vector<std::string> segments;
+  size_t start = 0, end = 0;
+  while (end != std::string::npos) {
+    end = dbid.find(delimiter, start);
+    segments.push_back(dbid.substr(
+        start, (end == std::string::npos) ? std::string::npos : end - start));
+    start = ((end > (std::string::npos - delimiter.size()))
+                 ? std::string::npos
+                 : end + delimiter.size());
+  }
+
+  std::vector<std::string> ancestors;
+  std::string accumulated;
+  for (size_t i = 0; i < segments.size(); ++i) {
+    if (i == 0) {
+      accumulated = segments[i];
+    } else {
+      accumulated += delimiter + segments[i];
+    }
+    ancestors.push_back(accumulated);
+  }
+  return ancestors;
+}
+
 //
 // Keep running till running is true
 //
 void CloudFileSystemImpl::Purger() {
-  Status st;
   // Run purge once every period.
   auto period = std::chrono::milliseconds(
       GetCloudFileSystemOptions().purger_periodicity_millis);
@@ -39,26 +64,22 @@ void CloudFileSystemImpl::Purger() {
     if (!purger_is_running_) {
       break;
     }
-    // delete the objects that were detected to be obsolete in the last
-    // run. This ensures that obsolete files are not immediately deleted
-    // because we need to give the clone-to-local-dir code ample time to
-    // copy them to local dir at clone-creation time.
+    // Delete the objects that were detected to be obsolete in the previous
+    // run. This two-phase approach ensures that obsolete files are not
+    // immediately deleted, giving clone-to-local-dir code time to copy
+    // them at clone-creation time.
 
-    // delete obsolete dbids
     for (const auto& p : to_be_deleted_dbids) {
-      // TODO more unit tests before we delete data
-      // st = DeleteDbid(GetDestBucketName(), p);
+      auto st = DeleteDbid(GetDestBucketName(), p);
       Log(InfoLogLevel::WARN_LEVEL, info_log_,
-          "[pg] dbid %s non-existent dbpath %s deleted. %s",
+          "[pg] bucket %s obsolete dbid %s deletion: %s",
           GetDestBucketName().c_str(), p.c_str(), st.ToString().c_str());
     }
 
-    // delete obsolete paths
     for (const auto& p : to_be_deleted_paths) {
-      // TODO more unit tests before we delete data
-      // st = DeleteCloudObject(GetDestBucketName(), p);
+      auto st = GetStorageProvider()->DeleteCloudObject(GetDestBucketName(), p);
       Log(InfoLogLevel::WARN_LEVEL, info_log_,
-          "[pg] bucket prefix %s obsolete dbpath %s deleted. %s",
+          "[pg] bucket %s obsolete path %s deletion: %s",
           GetDestBucketName().c_str(), p.c_str(), st.ToString().c_str());
     }
 
@@ -161,25 +182,18 @@ IOStatus CloudFileSystemImpl::FindObsoleteFiles(
 IOStatus CloudFileSystemImpl::FindObsoleteDbid(
     const std::string& bucket_name_prefix,
     std::vector<std::string>* to_delete_list) {
-  // fetch list of all registered dbids
   DbidList dbid_list;
   auto st = GetDbidList(bucket_name_prefix, &dbid_list);
 
-  // loop though all dbids. If the pathname does not exist in the bucket, then
-  // this dbid is a candidate for deletion.
   if (st.ok()) {
     for (auto iter = dbid_list.begin(); iter != dbid_list.end(); ++iter) {
-      std::unique_ptr<SequentialFile> result;
       std::string path = CloudManifestFile(iter->second);
-      st = GetStorageProvider()->ExistsCloudObject(GetDestBucketName(), path);
-      // this dbid can be cleaned up
+      st = GetStorageProvider()->ExistsCloudObject(bucket_name_prefix, path);
       if (st.IsNotFound()) {
         to_delete_list->push_back(iter->first);
-
         Log(InfoLogLevel::WARN_LEVEL, info_log_,
             "[pg] dbid %s non-existent dbpath %s scheduled for deletion",
             iter->first.c_str(), iter->second.c_str());
-        // We don't want to fail the final call
         st = IOStatus::OK();
       }
     }
@@ -187,83 +201,65 @@ IOStatus CloudFileSystemImpl::FindObsoleteDbid(
   return st;
 }
 
-//
 // For each of the dbids in the list, extract the entire list of
-// parent dbids.
+// parent dbids. The IDENTITY file contains a chain like:
+//   "rootDbId<sep>clone1Suffix<sep>clone2Suffix"
+// We reconstruct cumulative registered dbids from these segments:
+//   ["rootDbId", "rootDbId<sep>clone1Suffix",
+//    "rootDbId<sep>clone1Suffix<sep>clone2Suffix"]
+// These cumulative strings match the dbids stored in the registry.
 IOStatus CloudFileSystemImpl::extractParents(
     const std::string& bucket_name_prefix, const DbidList& dbid_list,
     DbidParents* parents) {
-  const std::string delimiter(DBID_SEPARATOR);
-  // use current time as seed for random generator
-  std::srand(static_cast<unsigned int>(std::time(0)));
-  const std::string random = std::to_string(std::rand());
+  std::string unique_suffix = Env::Default()->GenerateUniqueId();
+  unique_suffix = trim(unique_suffix);
   const std::string scratch(SCRATCH_LOCAL_DIR);
   IOStatus st;
   for (auto iter = dbid_list.begin(); iter != dbid_list.end(); ++iter) {
-    // download IDENTITY
     std::string cloudfile = iter->second + "/IDENTITY";
-    std::string localfile = scratch + "/.cloud_IDENTITY." + random;
+    std::string localfile = scratch + "/.cloud_IDENTITY." + unique_suffix;
     st = GetStorageProvider()->GetCloudObject(bucket_name_prefix, cloudfile,
                                               localfile);
     if (!st.ok() && !st.IsNotFound()) {
       Log(InfoLogLevel::ERROR_LEVEL, info_log_,
           "[pg] Unable to download IDENTITY file from "
-          "bucket %s. %s. Aborting...",
-          bucket_name_prefix.c_str(), st.ToString().c_str());
+          "bucket %s path %s. %s. Aborting...",
+          bucket_name_prefix.c_str(), cloudfile.c_str(), st.ToString().c_str());
       return st;
     } else if (!st.ok()) {
       Log(InfoLogLevel::ERROR_LEVEL, info_log_,
           "[pg] Unable to download IDENTITY file from "
-          "bucket %s. %s. Skipping...",
-          bucket_name_prefix.c_str(), st.ToString().c_str());
+          "bucket %s path %s. %s. Skipping...",
+          bucket_name_prefix.c_str(), cloudfile.c_str(), st.ToString().c_str());
       continue;
     }
 
-    // Read the dbid from the ID file
     std::string all_dbid;
     st = ReadFileToString(base_fs_.get(), localfile, &all_dbid);
+    // Always attempt to clean up the temp file
+    auto del_st = base_fs_->DeleteFile(localfile, IOOptions(), nullptr);
     if (!st.ok()) {
       Log(InfoLogLevel::ERROR_LEVEL, info_log_, "[pg] Unable to read %s %s",
           localfile.c_str(), st.ToString().c_str());
       return st;
     }
-    st = base_fs_->DeleteFile(localfile, IOOptions(), nullptr /*dbg*/);
-    if (!st.ok()) {
-      Log(InfoLogLevel::ERROR_LEVEL, info_log_, "[pg] Unable to delete %s %s",
-          localfile.c_str(), st.ToString().c_str());
-      return st;
+    if (!del_st.ok()) {
+      Log(InfoLogLevel::WARN_LEVEL, info_log_,
+          "[pg] Unable to delete temp file %s %s", localfile.c_str(),
+          del_st.ToString().c_str());
     }
 
-    // all_dbids is of the form 1x45-555cloud678a-6577cloud7789-9aef
     all_dbid = rtrim_if(trim(all_dbid), '\n');
 
-    // We want to return parents[1x45-555] = [678a-6577, 7789-9aef]
-    std::vector<std::string> parent_dbids;
-    size_t start = 0, end = 0;
-    while (end != std::string::npos) {
-      end = all_dbid.find(delimiter, start);
-
-      // If at end, use length=maxLength.  Else use length=end-start.
-      parent_dbids.push_back(all_dbid.substr(
-          start, (end == std::string::npos) ? std::string::npos : end - start));
-
-      // If at end, use start=maxSize.  Else use start=end+delimiter.
-      start = ((end > (std::string::npos - delimiter.size()))
-                   ? std::string::npos
-                   : end + delimiter.size());
+    if (all_dbid != iter->first) {
+      Log(InfoLogLevel::ERROR_LEVEL, info_log_,
+          "[pg] IDENTITY mismatch for dbid '%s': file contains '%s'",
+          iter->first.c_str(), all_dbid.c_str());
+      return IOStatus::Corruption(
+          "IDENTITY file content does not match registered dbid");
     }
-    if (parent_dbids.size() > 0) {
-      std::string leaf_dbid = parent_dbids[parent_dbids.size() - 1];
-      // Verify that the leaf dbid matches the one that we retrived from
-      // CloudFileSystem
-      if (leaf_dbid != iter->first) {
-        Log(InfoLogLevel::ERROR_LEVEL, info_log_,
-            "[pg] The IDENTITY file for dbid '%s' contains leaf dbid as '%s'",
-            iter->first.c_str(), leaf_dbid.c_str());
-        return st;
-      }
-      (*parents)[leaf_dbid] = parent_dbids;
-    }
+
+    (*parents)[iter->first] = BuildAncestorDbids(all_dbid);
   }
   return st;
 }

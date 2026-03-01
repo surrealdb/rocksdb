@@ -3,6 +3,8 @@
 
 #include "rocksdb/cloud/cloud_file_system.h"
 
+#include "rocksdb/cloud/cloud_file_system_impl.h"
+
 #ifdef USE_AWS
 #include <aws/core/Aws.h>
 #endif
@@ -190,12 +192,69 @@ TEST(CloudFileSystemTest, ConfigureS3Provider) {
 
 #ifdef USE_AWS
   ASSERT_OK(CloudFileSystemEnv::CreateFromString(config_options,
-                                              "id=aws; provider=s3", &cfs));
+                                                 "id=aws; provider=s3", &cfs));
   ASSERT_STREQ(cfs->Name(), "aws");
   ASSERT_NE(cfs->GetStorageProvider(), nullptr);
   ASSERT_STREQ(cfs->GetStorageProvider()->Name(),
                CloudStorageProviderImpl::kS3());
 #endif
+}
+
+// --- BuildAncestorDbids tests (no cloud credentials required) ---
+
+TEST(BuildAncestorDbidsTest, SingleDbid) {
+  auto result = CloudFileSystemImpl::BuildAncestorDbids("aaa-bbb");
+  ASSERT_EQ(result.size(), 1);
+  ASSERT_EQ(result[0], "aaa-bbb");
+}
+
+TEST(BuildAncestorDbidsTest, OneCloneLevel) {
+  // "srcclonedst" with separator "cloud" → ["src", "srcclonedst"]
+  auto result = CloudFileSystemImpl::BuildAncestorDbids("srccloudchild");
+  ASSERT_EQ(result.size(), 2);
+  ASSERT_EQ(result[0], "src");
+  ASSERT_EQ(result[1], "srccloudchild");
+}
+
+TEST(BuildAncestorDbidsTest, TwoCloneLevels) {
+  auto result = CloudFileSystemImpl::BuildAncestorDbids("aaacloudbbbcloudccc");
+  ASSERT_EQ(result.size(), 3);
+  ASSERT_EQ(result[0], "aaa");
+  ASSERT_EQ(result[1], "aaacloudbbb");
+  ASSERT_EQ(result[2], "aaacloudbbbcloudccc");
+}
+
+TEST(BuildAncestorDbidsTest, ThreeCloneLevels) {
+  auto result = CloudFileSystemImpl::BuildAncestorDbids(
+      "rootcloudgen1cloudgen2cloudgen3");
+  ASSERT_EQ(result.size(), 4);
+  ASSERT_EQ(result[0], "root");
+  ASSERT_EQ(result[1], "rootcloudgen1");
+  ASSERT_EQ(result[2], "rootcloudgen1cloudgen2");
+  ASSERT_EQ(result[3], "rootcloudgen1cloudgen2cloudgen3");
+}
+
+TEST(BuildAncestorDbidsTest, LastAncestorEqualsInput) {
+  std::string input = "aaacloudbbbcloudccc";
+  auto result = CloudFileSystemImpl::BuildAncestorDbids(input);
+  ASSERT_FALSE(result.empty());
+  ASSERT_EQ(result.back(), input);
+}
+
+TEST(BuildAncestorDbidsTest, UuidStyleDbids) {
+  std::string root = "550e8400-e29b-41d4-a716-446655440000";
+  std::string child_suffix = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+  std::string full = root + "cloud" + child_suffix;
+  auto result = CloudFileSystemImpl::BuildAncestorDbids(full);
+  ASSERT_EQ(result.size(), 2);
+  ASSERT_EQ(result[0], root);
+  ASSERT_EQ(result[1], full);
+}
+
+TEST(BuildAncestorDbidsTest, EmptyString) {
+  auto result = CloudFileSystemImpl::BuildAncestorDbids("");
+  ASSERT_EQ(result.size(), 1);
+  ASSERT_EQ(result[0], "");
 }
 
 }  // namespace ROCKSDB_NAMESPACE
