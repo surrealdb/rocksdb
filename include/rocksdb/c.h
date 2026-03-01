@@ -3813,6 +3813,122 @@ extern ROCKSDB_LIBRARY_API char* rocksdb_open_and_compact_with_options(
     const rocksdb_compaction_service_options_override_t* override_options,
     char** errptr);
 
+/* Cloud support - only available when built with -DROCKSDB_CLOUD */
+#ifdef ROCKSDB_CLOUD
+
+/* Cloud opaque types */
+typedef struct rocksdb_cloud_fs_t rocksdb_cloud_fs_t;
+typedef struct rocksdb_cloud_fs_options_t rocksdb_cloud_fs_options_t;
+typedef struct rocksdb_cloud_bucket_options_t rocksdb_cloud_bucket_options_t;
+typedef struct rocksdb_cloud_otxn_db_t rocksdb_cloud_otxn_db_t;
+typedef struct rocksdb_cloud_txn_db_t rocksdb_cloud_txn_db_t;
+
+/* Cloud FS options */
+
+extern ROCKSDB_LIBRARY_API rocksdb_cloud_fs_options_t*
+rocksdb_cloud_fs_options_create(void);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_fs_options_destroy(
+    rocksdb_cloud_fs_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_fs_options_set_src_bucket(
+    rocksdb_cloud_fs_options_t* opts, rocksdb_cloud_bucket_options_t* bucket);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_fs_options_set_dest_bucket(
+    rocksdb_cloud_fs_options_t* opts, rocksdb_cloud_bucket_options_t* bucket);
+
+/* Cloud bucket options */
+
+extern ROCKSDB_LIBRARY_API rocksdb_cloud_bucket_options_t*
+rocksdb_cloud_bucket_options_create(void);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_bucket_options_destroy(
+    rocksdb_cloud_bucket_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_bucket_options_set_bucket_name(
+    rocksdb_cloud_bucket_options_t* opts, const char* bucket_name);
+
+extern ROCKSDB_LIBRARY_API const char*
+rocksdb_cloud_bucket_options_get_bucket_name(
+    rocksdb_cloud_bucket_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_bucket_options_set_region(
+    rocksdb_cloud_bucket_options_t* opts, const char* region);
+
+extern ROCKSDB_LIBRARY_API const char* rocksdb_cloud_bucket_options_get_region(
+    rocksdb_cloud_bucket_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_bucket_options_set_object_path(
+    rocksdb_cloud_bucket_options_t* opts, const char* object_path);
+
+extern ROCKSDB_LIBRARY_API const char*
+rocksdb_cloud_bucket_options_get_object_path(
+    rocksdb_cloud_bucket_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API unsigned char rocksdb_cloud_bucket_options_is_valid(
+    rocksdb_cloud_bucket_options_t* opts);
+
+/* Cloud file system / environment */
+
+extern ROCKSDB_LIBRARY_API rocksdb_cloud_fs_t* rocksdb_cloud_fs_create(
+    rocksdb_cloud_fs_options_t* options, char** errptr);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_fs_destroy(
+    rocksdb_cloud_fs_t* cfs);
+
+extern ROCKSDB_LIBRARY_API rocksdb_env_t* rocksdb_cloud_env_create(
+    rocksdb_cloud_fs_t* cfs);
+
+/* CloudOptimisticTransactionDB */
+
+extern ROCKSDB_LIBRARY_API rocksdb_cloud_otxn_db_t*
+rocksdb_cloud_otxn_db_open(rocksdb_options_t* options, const char* name,
+                           const char* persistent_cache_path,
+                           const uint64_t persistent_cache_size_gb,
+                           char** errptr);
+
+extern ROCKSDB_LIBRARY_API rocksdb_cloud_otxn_db_t*
+rocksdb_cloud_otxn_db_open_column_families(
+    const rocksdb_options_t* options, const char* name,
+    const char* persistent_cache_path,
+    const uint64_t persistent_cache_size_gb, int num_column_families,
+    const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_otxn_db_close(
+    rocksdb_cloud_otxn_db_t* otxn_db);
+
+extern ROCKSDB_LIBRARY_API rocksdb_optimistictransactiondb_t*
+rocksdb_cloud_otxn_db_get_txn_db(rocksdb_cloud_otxn_db_t* otxn_db);
+
+/* CloudTransactionDB */
+
+extern ROCKSDB_LIBRARY_API rocksdb_cloud_txn_db_t*
+rocksdb_cloud_txn_db_open(rocksdb_options_t* options,
+                          rocksdb_transactiondb_options_t* txn_db_options,
+                          const char* name, const char* persistent_cache_path,
+                          const uint64_t persistent_cache_size_gb,
+                          char** errptr);
+
+extern ROCKSDB_LIBRARY_API rocksdb_cloud_txn_db_t*
+rocksdb_cloud_txn_db_open_column_families(
+    const rocksdb_options_t* options,
+    rocksdb_transactiondb_options_t* txn_db_options, const char* name,
+    const char* persistent_cache_path,
+    const uint64_t persistent_cache_size_gb, int num_column_families,
+    const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_txn_db_close(
+    rocksdb_cloud_txn_db_t* txn_db);
+
+extern ROCKSDB_LIBRARY_API rocksdb_transactiondb_t*
+rocksdb_cloud_txn_db_get_txn_db(rocksdb_cloud_txn_db_t* txn_db);
+
+#endif /* ROCKSDB_CLOUD */
+
 #ifdef __cplusplus
 } /* end extern "C" */
 #endif

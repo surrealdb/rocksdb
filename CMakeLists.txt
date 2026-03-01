@@ -1142,6 +1142,8 @@ if(WITH_CLOUD)
     cloud/cloud_scheduler.cc
     cloud/cloud_file_deletion_scheduler.cc
     cloud/db_cloud_impl.cc
+    cloud/cloud_optimistic_transaction_db_impl.cc
+    cloud/cloud_transaction_db_impl.cc
     cloud/manifest_reader.cc
     cloud/purge.cc
     db/db_impl/replication_codec.cc
@@ -1603,6 +1605,8 @@ if(WITH_TESTS)
       list(APPEND TESTS
         cloud/cloud_file_system_test.cc
         cloud/cloud_manifest_test.cc
+        cloud/cloud_optimistic_transaction_db_test.cc
+        cloud/cloud_transaction_db_test.cc
         cloud/db_cloud_test.cc
       )
     endif()
