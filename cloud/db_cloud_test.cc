@@ -489,7 +489,8 @@ TEST_F(CloudTest, FindAllLiveFilesTest) {
   std::vector<std::string> tablefiles;
   std::string manifest;
   // fetch latest manifest to local
-  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &tablefiles, &manifest));
+  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &tablefiles,
+                                                   nullptr, &manifest));
   EXPECT_EQ(tablefiles.size(), 1);
 
   for (auto name: tablefiles) {
@@ -508,6 +509,86 @@ TEST_F(CloudTest, FindAllLiveFilesTest) {
   EXPECT_OK(storage_provider->ExistsCloudObject(bucket_name, object_path));
 }
 
+TEST_F(CloudTest, BlobDBCloudBasicTest) {
+  options_.enable_blob_files = true;
+  options_.min_blob_size = 0;
+  OpenDB();
+
+  ASSERT_OK(db_->Put(WriteOptions(), "BlobKey1", "BlobValue1"));
+  ASSERT_OK(db_->Put(WriteOptions(), "BlobKey2", "BlobValue2"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  GetDBImpl()->TEST_WaitForBackgroundWork();
+
+  CloseDB();
+
+  // Reopen and validate data is readable
+  OpenDB();
+  std::string value;
+  ASSERT_OK(db_->Get(ReadOptions(), "BlobKey1", &value));
+  ASSERT_EQ(value, "BlobValue1");
+  ASSERT_OK(db_->Get(ReadOptions(), "BlobKey2", &value));
+  ASSERT_EQ(value, "BlobValue2");
+  CloseDB();
+}
+
+TEST_F(CloudTest, BlobDBFindAllLiveFilesTest) {
+  options_.enable_blob_files = true;
+  options_.min_blob_size = 0;
+  OpenDB();
+
+  ASSERT_OK(db_->Put(WriteOptions(), "BlobKey", "BlobValue"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  GetDBImpl()->TEST_WaitForBackgroundWork();
+  CloseDB();
+
+  std::vector<std::string> tablefiles;
+  std::vector<std::string> blobfiles;
+  std::string manifest;
+  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &tablefiles,
+                                                   &blobfiles, &manifest));
+  EXPECT_GE(tablefiles.size(), 1);
+  EXPECT_GE(blobfiles.size(), 1);
+
+  for (auto& name : tablefiles) {
+    EXPECT_EQ(GetFileType(name), RocksDBFileType::kSstFile);
+    EXPECT_OK(GetCloudFileSystem()->GetStorageProvider()->ExistsCloudObject(
+        GetCloudFileSystem()->GetSrcBucketName(),
+        GetCloudFileSystem()->GetSrcObjectPath() + pathsep + name));
+  }
+
+  for (auto& name : blobfiles) {
+    EXPECT_EQ(GetFileType(name), RocksDBFileType::kBlobFile);
+    EXPECT_OK(GetCloudFileSystem()->GetStorageProvider()->ExistsCloudObject(
+        GetCloudFileSystem()->GetSrcBucketName(),
+        GetCloudFileSystem()->GetSrcObjectPath() + pathsep + name));
+  }
+}
+
+TEST_F(CloudTest, BlobDBCloneTest) {
+  options_.enable_blob_files = true;
+  options_.min_blob_size = 0;
+  OpenDB();
+
+  ASSERT_OK(db_->Put(WriteOptions(), "BlobCloneKey1", "BlobCloneValue1"));
+  ASSERT_OK(db_->Put(WriteOptions(), "BlobCloneKey2", "BlobCloneValue2"));
+  ASSERT_OK(db_->Flush(FlushOptions()));
+  GetDBImpl()->TEST_WaitForBackgroundWork();
+  CloseDB();
+
+  // Clone from cloud into a fresh local directory (ephemeral clone)
+  {
+    std::unique_ptr<Env> env;
+    std::unique_ptr<DBCloud> cloud_db;
+    CloneDB("blob_clone", "", "", &cloud_db, &env);
+
+    std::string value;
+    ASSERT_OK(cloud_db->Get(ReadOptions(), "BlobCloneKey1", &value));
+    ASSERT_EQ(value, "BlobCloneValue1");
+    ASSERT_OK(cloud_db->Get(ReadOptions(), "BlobCloneKey2", &value));
+    ASSERT_EQ(value, "BlobCloneValue2");
+  }
+}
+
 // Files of dropped CF should not be included in live files
 TEST_F(CloudTest, LiveFilesOfDroppedCFTest) {
   std::vector<ColumnFamilyHandle*> handles;
@@ -515,8 +596,8 @@ TEST_F(CloudTest, LiveFilesOfDroppedCFTest) {
 
   std::vector<std::string> tablefiles;
   std::string manifest;
-  ASSERT_OK(
-      GetCloudFileSystem()->FindAllLiveFiles(dbname_, &tablefiles, &manifest));
+  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &tablefiles,
+                                                   nullptr, &manifest));
 
   EXPECT_TRUE(tablefiles.empty());
   CreateColumnFamilies({"cf1"}, &handles);
@@ -527,16 +608,16 @@ TEST_F(CloudTest, LiveFilesOfDroppedCFTest) {
   ASSERT_OK(db_->Flush({}, handles[1]));
 
   tablefiles.clear();
-  ASSERT_OK(
-      GetCloudFileSystem()->FindAllLiveFiles(dbname_, &tablefiles, &manifest));
+  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &tablefiles,
+                                                   nullptr, &manifest));
   EXPECT_TRUE(tablefiles.size() == 1);
 
   // Drop the CF
   ASSERT_OK(db_->DropColumnFamily(handles[1]));
   tablefiles.clear();
   // make sure that files are not listed as live for dropped CF
-  ASSERT_OK(
-      GetCloudFileSystem()->FindAllLiveFiles(dbname_, &tablefiles, &manifest));
+  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &tablefiles,
+                                                   nullptr, &manifest));
   EXPECT_TRUE(tablefiles.empty());
   CloseDB(&handles);
 }
@@ -554,7 +635,7 @@ TEST_F(CloudTest, LiveFilesAfterChangingLevelTest) {
   std::vector<std::string> tablefiles_before_move;
   std::string manifest;
   ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(
-      dbname_, &tablefiles_before_move, &manifest));
+      dbname_, &tablefiles_before_move, nullptr, &manifest));
   EXPECT_EQ(tablefiles_before_move.size(), 1);
 
   CompactRangeOptions cro;
@@ -567,7 +648,7 @@ TEST_F(CloudTest, LiveFilesAfterChangingLevelTest) {
 
   std::vector<std::string> tablefiles_after_move;
   ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(
-      dbname_, &tablefiles_after_move, &manifest));
+      dbname_, &tablefiles_after_move, nullptr, &manifest));
   EXPECT_EQ(tablefiles_before_move, tablefiles_after_move);
 }
 
@@ -1346,10 +1427,8 @@ TEST_F(CloudTest, MigrateFromPureRocksDB) {
   {  // Create local RocksDB
     Options options;
     options.create_if_missing = true;
-    DB* dbptr;
     std::unique_ptr<DB> db;
-    ASSERT_OK(DB::Open(options, dbname_, &dbptr));
-    db.reset(dbptr);
+    ASSERT_OK(DB::Open(options, dbname_, &db));
     // create 5 files
     for (int i = 0; i < 5; ++i) {
       auto key = "key" + std::to_string(i);
@@ -1860,7 +1939,7 @@ TEST_F(CloudTest, FindLiveFilesFetchManifestTest) {
 
   // manifest file will be fetched to local db
   ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &live_sst_files,
-                                                   &manifest_file));
+                                                   nullptr, &manifest_file));
   EXPECT_EQ(live_sst_files.size(), 1);
 }
 
@@ -1871,7 +1950,7 @@ TEST_F(CloudTest, FileModificationTimeTest) {
   std::vector<std::string> live_sst_files;
   std::string manifest_file;
   ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &live_sst_files,
-                                                   &manifest_file));
+                                                   nullptr, &manifest_file));
   uint64_t modtime1;
   ASSERT_OK(aenv_->GetFileSystem()->GetFileModificationTime(
       dbname_ + pathsep + manifest_file, kIOOptions, &modtime1, kDbg));
@@ -1936,7 +2015,7 @@ TEST_F(CloudTest, LiveFilesConsistentAfterApplyCloudManifestDeltaTest) {
   std::vector<std::string> live_sst_files1;
   std::string manifest_file1;
   ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &live_sst_files1,
-                                                   &manifest_file1));
+                                                   nullptr, &manifest_file1));
 
   std::string new_cookie = "2";
   std::string new_epoch = "dca7f3e19212c4b3";
@@ -1950,7 +2029,7 @@ TEST_F(CloudTest, LiveFilesConsistentAfterApplyCloudManifestDeltaTest) {
   std::vector<std::string> live_sst_files2;
   std::string manifest_file2;
   ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &live_sst_files2,
-                                                   &manifest_file2));
+                                                   nullptr, &manifest_file2));
 
   EXPECT_EQ(live_sst_files1, live_sst_files2);
   EXPECT_NE(manifest_file1, manifest_file2);
@@ -2256,8 +2335,8 @@ TEST_F(CloudTest, InvisibleFileDeletionOnDBOpenTest) {
   ASSERT_OK(db_->Flush({}));
   std::vector<std::string> cookie1_sst_files;
   std::string cookie1_manifest_file;
-  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &cookie1_sst_files,
-                                                   &cookie1_manifest_file));
+  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(
+      dbname_, &cookie1_sst_files, nullptr, &cookie1_manifest_file));
   ASSERT_EQ(cookie1_sst_files.size(), 1);
   CloseDB();
 
@@ -2286,8 +2365,8 @@ TEST_F(CloudTest, InvisibleFileDeletionOnDBOpenTest) {
 
   std::vector<std::string> cookie2_sst_files;
   std::string cookie2_manifest_file;
-  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &cookie2_sst_files,
-                                                   &cookie2_manifest_file));
+  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(
+      dbname_, &cookie2_sst_files, nullptr, &cookie2_manifest_file));
   ASSERT_EQ(cookie2_sst_files.size(), 2);
   CloseDB();
 
@@ -2364,8 +2443,8 @@ TEST_F(CloudTest, DisableInvisibleFileDeletionOnOpenTest) {
 
   std::vector<std::string> cookie1_sst_files;
   std::string cookie1_manifest_file;
-  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &cookie1_sst_files,
-                                                   &cookie1_manifest_file));
+  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(
+      dbname_, &cookie1_sst_files, nullptr, &cookie1_manifest_file));
   ASSERT_EQ(cookie1_sst_files.size(), 1);
 
   auto cookie1_manifest_filepath = dbname_ + pathsep + cookie1_manifest_file;
@@ -2382,8 +2461,8 @@ TEST_F(CloudTest, DisableInvisibleFileDeletionOnOpenTest) {
   std::vector<std::string> cookie2_sst_files;
   std::string cookie2_manifest_file;
 
-  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(dbname_, &cookie2_sst_files,
-                                                   &cookie2_manifest_file));
+  ASSERT_OK(GetCloudFileSystem()->FindAllLiveFiles(
+      dbname_, &cookie2_sst_files, nullptr, &cookie2_manifest_file));
   ASSERT_EQ(cookie2_sst_files.size(), 2);
 
   // exclude cookie1_sst_files from cookie2_sst_files
@@ -2431,7 +2510,6 @@ TEST_F(CloudTest, DisableObsoleteFileDeletionOnOpenTest) {
   options_.write_buffer_size = 110 << 10;  // 110KB
   options_.arena_block_size = 4 << 10;
   options_.keep_log_file_num = 1;
-  options_.use_options_file = false;
   // put wal files into one directory so that we don't need to count number of local
   // wal files
   options_.wal_dir = dbname_ + "/wal";
@@ -2470,7 +2548,7 @@ TEST_F(CloudTest, DisableObsoleteFileDeletionOnOpenTest) {
 
   CloseDB();
 
-  options_.disable_delete_obsolete_files_on_open = true;
+  // options_.disable_delete_obsolete_files_on_open = true;  // not available
   OpenDB();
   // obsolete files are not deleted
   EXPECT_EQ(GetAllLocalFiles().size(), 10);
@@ -2917,14 +2995,14 @@ TEST_F(CloudTest, CloudFileDeletionNotTriggeredIfDestBucketNotSet) {
   CloseDB();
 
   // generate obsolete sst files to delete
-  options_.disable_delete_obsolete_files_on_open = true;
+  // options_.disable_delete_obsolete_files_on_open = true;  // not available
   cloud_fs_options_.delete_cloud_invisible_files_on_open = false;
   OpenDB();
   GenerateObsoleteFilesOnEmptyDB(GetDBImpl(), GetCloudFileSystem(),
                                  &files_to_delete);
   CloseDB();
 
-  options_.disable_delete_obsolete_files_on_open = false;
+  // options_.disable_delete_obsolete_files_on_open = false;  // not available
   cloud_fs_options_.dest_bucket.SetBucketName("");
   cloud_fs_options_.dest_bucket.SetObjectPath("");
   cloud_fs_options_.delete_cloud_invisible_files_on_open = true;
@@ -3017,7 +3095,7 @@ TEST_F(
   // Generate some invisible files to delete
   // Disable file deletion to make sure these files are not deleted
   // automatically
-  options_.disable_delete_obsolete_files_on_open = true;
+  // options_.disable_delete_obsolete_files_on_open = true;  // not available
   cloud_fs_options_.delete_cloud_invisible_files_on_open = false;
   OpenDB();
   std::vector<std::string> obsolete_files;

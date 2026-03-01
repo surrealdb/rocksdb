@@ -219,6 +219,7 @@ IOStatus CloudFileSystemImpl::NewRandomAccessFile(
   auto fname = RemapFilename(logical_fname);
   auto file_type = GetFileType(fname);
   bool sstfile = (file_type == RocksDBFileType::kSstFile),
+       blobfile = (file_type == RocksDBFileType::kBlobFile),
        manifest = (file_type == RocksDBFileType::kManifestFile),
        identity = (file_type == RocksDBFileType::kIdentityFile),
        logfile = (file_type == RocksDBFileType::kLogFile);
@@ -230,8 +231,8 @@ IOStatus CloudFileSystemImpl::NewRandomAccessFile(
   }
 
   const IOOptions io_opts;
-  if (sstfile || manifest || identity) {
-    if (cloud_fs_options.keep_local_sst_files || !sstfile) {
+  if (sstfile || blobfile || manifest || identity) {
+    if (cloud_fs_options.keep_local_sst_files || (!sstfile && !blobfile)) {
       // Read from local storage and then from cloud storage.
       st = base_fs_->NewRandomAccessFile(fname, file_opts, result, dbg);
 
@@ -250,7 +251,8 @@ IOStatus CloudFileSystemImpl::NewRandomAccessFile(
       }
       // If we are being paranoic, then we validate that our file size is
       // the same as in cloud storage.
-      if (st.ok() && sstfile && cloud_fs_options.validate_filesize) {
+      if (st.ok() && (sstfile || blobfile) &&
+          cloud_fs_options.validate_filesize) {
         uint64_t remote_size = 0;
         uint64_t local_size = 0;
         auto stax = base_fs_->GetFileSize(fname, io_opts, &local_size, dbg);
@@ -287,7 +289,7 @@ IOStatus CloudFileSystemImpl::NewRandomAccessFile(
     return st;
   }
 
-  // This is neither a sst file or a log file. Read from default env.
+  // This is neither a sst/blob file or a log file. Read from default env.
   return base_fs_->NewRandomAccessFile(fname, file_opts, result, dbg);
 }
 
@@ -300,12 +302,13 @@ IOStatus CloudFileSystemImpl::NewWritableFile(
   auto fname = RemapFilename(logical_fname);
   auto file_type = GetFileType(fname);
   bool sstfile = (file_type == RocksDBFileType::kSstFile),
+       blobfile = (file_type == RocksDBFileType::kBlobFile),
        manifest = (file_type == RocksDBFileType::kManifestFile),
        identity = (file_type == RocksDBFileType::kIdentityFile),
        logfile = (file_type == RocksDBFileType::kLogFile);
 
   IOStatus s;
-  if (HasDestBucket() && (sstfile || identity || manifest)) {
+  if (HasDestBucket() && (sstfile || blobfile || identity || manifest)) {
     std::unique_ptr<CloudStorageWritableFile> f;
     s = GetStorageProvider()->NewCloudWritableFile(
         fname, GetDestBucketName(), destname(fname), file_opts, &f, dbg);
@@ -353,11 +356,12 @@ IOStatus CloudFileSystemImpl::FileExists(const std::string& logical_fname,
   auto fname = RemapFilename(logical_fname);
   auto file_type = GetFileType(fname);
   bool sstfile = (file_type == RocksDBFileType::kSstFile),
+       blobfile = (file_type == RocksDBFileType::kBlobFile),
        manifest = (file_type == RocksDBFileType::kManifestFile),
        identity = (file_type == RocksDBFileType::kIdentityFile),
        logfile = (file_type == RocksDBFileType::kLogFile);
 
-  if (sstfile || manifest || identity) {
+  if (sstfile || blobfile || manifest || identity) {
     // We read first from local storage and then from cloud storage.
     st = base_fs_->FileExists(fname, io_opts, dbg);
     if (st.IsNotFound()) {
@@ -406,7 +410,8 @@ IOStatus CloudFileSystemImpl::GetChildren(const std::string& path,
       std::remove_if(result->begin(), result->end(),
                      [&](const std::string& f) {
                        auto noepoch = RemoveEpoch(f);
-                       if (!IsSstFile(noepoch) && !IsManifestFile(noepoch)) {
+                       if (!IsSstFile(noepoch) && !IsBlobFile(noepoch) &&
+                           !IsManifestFile(noepoch)) {
                          return false;
                        }
                        return RemapFilename(noepoch) != f;
@@ -415,8 +420,8 @@ IOStatus CloudFileSystemImpl::GetChildren(const std::string& path,
   // Remove the epoch, remap into RocksDB's domain
   for (size_t i = 0; i < result->size(); ++i) {
     auto noepoch = RemoveEpoch(result->at(i));
-    if (IsSstFile(noepoch) || IsManifestFile(noepoch)) {
-      // remap sst and manifest files
+    if (IsSstFile(noepoch) || IsBlobFile(noepoch) || IsManifestFile(noepoch)) {
+      // remap sst, blob, and manifest files
       result->at(i) = noepoch;
     }
   }
@@ -438,10 +443,11 @@ IOStatus CloudFileSystemImpl::GetFileSize(const std::string& logical_fname,
   auto fname = RemapFilename(logical_fname);
   auto file_type = GetFileType(fname);
   bool sstfile = (file_type == RocksDBFileType::kSstFile),
+       blobfile = (file_type == RocksDBFileType::kBlobFile),
        logfile = (file_type == RocksDBFileType::kLogFile);
 
   IOStatus st;
-  if (sstfile) {
+  if (sstfile || blobfile) {
     if (base_fs_->FileExists(fname, io_opts, dbg).ok()) {
       st = base_fs_->GetFileSize(fname, io_opts, size, dbg);
     } else {
@@ -464,10 +470,11 @@ IOStatus CloudFileSystemImpl::GetFileModificationTime(
   auto fname = RemapFilename(logical_fname);
   auto file_type = GetFileType(fname);
   bool sstfile = (file_type == RocksDBFileType::kSstFile),
+       blobfile = (file_type == RocksDBFileType::kBlobFile),
        logfile = (file_type == RocksDBFileType::kLogFile);
 
   IOStatus st;
-  if (sstfile) {
+  if (sstfile || blobfile) {
     if (base_fs_->FileExists(fname, io_opts, dbg).ok()) {
       st = base_fs_->GetFileModificationTime(fname, io_opts, time, dbg);
     } else {
@@ -661,6 +668,7 @@ IOStatus CloudFileSystemImpl::DeleteFile(const std::string& logical_fname,
   auto fname = RemapFilename(logical_fname);
   auto file_type = GetFileType(fname);
   bool sstfile = (file_type == RocksDBFileType::kSstFile),
+       blobfile = (file_type == RocksDBFileType::kBlobFile),
        manifest = (file_type == RocksDBFileType::kManifestFile),
        identity = (file_type == RocksDBFileType::kIdentityFile),
        logfile = (file_type == RocksDBFileType::kLogFile);
@@ -693,7 +701,7 @@ IOStatus CloudFileSystemImpl::DeleteFile(const std::string& logical_fname,
 
   IOStatus st;
   // Delete from destination bucket and local dir
-  if (sstfile || manifest || identity) {
+  if (sstfile || blobfile || manifest || identity) {
     if (HasDestBucket()) {
       // add the remote file deletion to the queue
       st = DeleteCloudFileFromDest(basename(fname));
@@ -824,6 +832,10 @@ std::string RemapFilenameWithCloudManifest(const std::string& logical_path,
       assert(cloud_manifest);
       epoch = cloud_manifest->GetEpoch(fileNumber);
       break;
+    case kBlobFile:
+      assert(cloud_manifest);
+      epoch = cloud_manifest->GetEpoch(fileNumber);
+      break;
     case kDescriptorFile:
       // We should not be accessing MANIFEST files before CLOUDMANIFEST is
       // loaded
@@ -924,7 +936,7 @@ bool CloudFileSystemImpl::IsFileInvisible(
     return !is_active;
   } else {
     auto noepoch = RemoveEpoch(fname);
-    if ((IsSstFile(noepoch) || IsManifestFile(noepoch)) &&
+    if ((IsSstFile(noepoch) || IsBlobFile(noepoch) || IsManifestFile(noepoch)) &&
         (RemapFilename(noepoch) != fname)) {
       return true;
     }
@@ -2194,13 +2206,29 @@ void CloudFileSystemImpl::RemapFileNumbers(
   }
 }
 
+void CloudFileSystemImpl::RemapBlobFileNumbers(
+    const std::set<uint64_t>& file_numbers,
+    std::vector<std::string>* blob_file_names) {
+  blob_file_names->resize(file_numbers.size());
+
+  size_t idx = 0;
+  for (auto num : file_numbers) {
+    std::string logical_path = BlobFileName(num);
+    (*blob_file_names)[idx] = RemapFilename(logical_path);
+    idx++;
+  }
+}
+
 IOStatus CloudFileSystemImpl::FindAllLiveFiles(
     const std::string& local_dbname, std::vector<std::string>* live_sst_files,
-    std::string* manifest_file) {
+    std::vector<std::string>* live_blob_files, std::string* manifest_file) {
   std::unique_ptr<LocalManifestReader> extractor(
       new LocalManifestReader(info_log_, this));
   std::set<uint64_t> file_nums;
-  auto st = extractor->GetLiveFilesLocally(local_dbname, &file_nums);
+  std::set<uint64_t> blob_file_nums;
+  auto st = extractor->GetLiveFilesLocally(
+      local_dbname, &file_nums,
+      live_blob_files ? &blob_file_nums : nullptr);
   if (!st.ok()) {
     return st;
   }
@@ -2208,25 +2236,37 @@ IOStatus CloudFileSystemImpl::FindAllLiveFiles(
   // filename will be remapped correctly based on current_epoch of
   // cloud_manifest
   *manifest_file =
-      RemapFilename(ManifestFileWithEpoch("" /* dbname */, "" /* epoch */));
+      RemapFilename(ManifestFileWithEpoch("" /* epoch */));
 
   RemapFileNumbers(file_nums, live_sst_files);
+
+  if (live_blob_files) {
+    RemapBlobFileNumbers(blob_file_nums, live_blob_files);
+  }
 
   return IOStatus::OK();
 }
 
 IOStatus CloudFileSystemImpl::FindLiveFilesFromLocalManifest(
     const std::string& manifest_file,
-    std::vector<std::string>* live_sst_files) {
+    std::vector<std::string>* live_sst_files,
+    std::vector<std::string>* live_blob_files) {
   std::unique_ptr<LocalManifestReader> extractor(
       new LocalManifestReader(info_log_, this));
   std::set<uint64_t> file_nums;
-  auto st = extractor->GetManifestLiveFiles(manifest_file, &file_nums);
+  std::set<uint64_t> blob_file_nums;
+  auto st = extractor->GetManifestLiveFiles(
+      manifest_file, &file_nums,
+      live_blob_files ? &blob_file_nums : nullptr);
   if (!st.ok()) {
     return st;
   }
 
   RemapFileNumbers(file_nums, live_sst_files);
+
+  if (live_blob_files) {
+    RemapBlobFileNumbers(blob_file_nums, live_blob_files);
+  }
 
   return IOStatus::OK();
 }

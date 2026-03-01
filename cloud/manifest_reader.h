@@ -27,7 +27,8 @@ class LocalManifestReader {
   // same content as the CLOUDMANIFEST file stored locally. cloud_manifest_ is
   // not updated when calling the function
   IOStatus GetLiveFilesLocally(const std::string& local_dbname,
-                               std::set<uint64_t>* list) const;
+                               std::set<uint64_t>* list,
+                               std::set<uint64_t>* blob_list = nullptr) const;
 
   // Read given local manifest file and return all live files that it
   // references. This doesn't rely on CLOUDMANIFEST and just accepts (any valid)
@@ -36,14 +37,16 @@ class LocalManifestReader {
   // Provided manifest file is not updated or pulled from cloud when calling the
   // function.
   IOStatus GetManifestLiveFiles(const std::string& manifest_file,
-                                std::set<uint64_t>* list) const;
+                                std::set<uint64_t>* list,
+                                std::set<uint64_t>* blob_list = nullptr) const;
 
  protected:
-  // Get all the live SST file numbers by reading version_edit records from
-  // file_reader
+  // Get all live SST and blob file numbers by reading version_edit records from
+  // file_reader. blob_list is optional and may be nullptr.
   IOStatus GetLiveFilesFromFileReader(
       std::unique_ptr<SequentialFileReader> file_reader,
-      std::set<uint64_t>* list) const;
+      std::set<uint64_t>* list,
+      std::set<uint64_t>* blob_list = nullptr) const;
 
   std::shared_ptr<Logger> info_log_;
   CloudFileSystem* cfs_;
@@ -62,7 +65,8 @@ class ManifestReader : public LocalManifestReader {
   // TODO(wei): remove this function. Reading from s3 directly is very slow for
   // large MANIFEST file
   IOStatus GetLiveFiles(const std::string& bucket_path,
-                        std::set<uint64_t>* list) const;
+                        std::set<uint64_t>* list,
+                        std::set<uint64_t>* blob_list = nullptr) const;
 
   static IOStatus GetMaxFileNumberFromManifest(FileSystem* fs,
                                                const std::string& fname,
