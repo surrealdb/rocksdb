@@ -356,6 +356,8 @@ CLOUD_SOURCES =                                                 \
   cloud/cloud_scheduler.cc                                      \
   cloud/cloud_file_deletion_scheduler.cc                        \
   cloud/db_cloud_impl.cc                                        \
+  cloud/cloud_optimistic_transaction_db_impl.cc                 \
+  cloud/cloud_transaction_db_impl.cc                            \
   cloud/manifest_reader.cc                                      \
   cloud/purge.cc                                                \
   db/db_impl/replication_codec.cc                               \
@@ -365,6 +367,8 @@ CLOUD_TEST_SOURCES =                                            \
   cloud/db_cloud_test.cc                                        \
   cloud/cloud_file_system_test.cc                               \
   cloud/cloud_manifest_test.cc                                  \
+  cloud/cloud_optimistic_transaction_db_test.cc                 \
+  cloud/cloud_transaction_db_test.cc                            \
   cloud/cloud_scheduler_test.cc                                 \
   cloud/replication_test.cc                                      \
 

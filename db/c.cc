@@ -52,6 +52,15 @@
 #include "util/stderr_logger.h"
 #include "utilities/merge_operators.h"
 
+#ifdef ROCKSDB_CLOUD
+#include "rocksdb/cloud/cloud_file_system.h"
+#include "rocksdb/cloud/cloud_optimistic_transaction_db.h"
+#include "rocksdb/cloud/cloud_transaction_db.h"
+#ifdef USE_AWS
+#include <aws/core/Aws.h>
+#endif
+#endif  // ROCKSDB_CLOUD
+
 using ROCKSDB_NAMESPACE::BackgroundErrorReason;
 using ROCKSDB_NAMESPACE::BackupEngine;
 using ROCKSDB_NAMESPACE::BackupEngineOptions;
@@ -8850,5 +8859,282 @@ unsigned char rocksdb_get_into_buffer_cf(
     return 0;
   }
 }
+
+#ifdef ROCKSDB_CLOUD
+
+using ROCKSDB_NAMESPACE::BucketOptions;
+using ROCKSDB_NAMESPACE::CloudFileSystem;
+using ROCKSDB_NAMESPACE::CloudFileSystemEnv;
+using ROCKSDB_NAMESPACE::CloudFileSystemOptions;
+using ROCKSDB_NAMESPACE::CloudOptimisticTransactionDB;
+using ROCKSDB_NAMESPACE::CloudTransactionDB;
+using ROCKSDB_NAMESPACE::FileSystem;
+
+struct rocksdb_cloud_fs_t {
+  CloudFileSystem* rep;
+};
+
+struct rocksdb_cloud_fs_options_t {
+  CloudFileSystemOptions rep;
+};
+
+struct rocksdb_cloud_bucket_options_t {
+  BucketOptions rep;
+};
+
+struct rocksdb_cloud_otxn_db_t {
+  CloudOptimisticTransactionDB* rep;
+};
+
+struct rocksdb_cloud_txn_db_t {
+  CloudTransactionDB* rep;
+};
+
+// CloudFileSystemOptions
+
+rocksdb_cloud_fs_options_t* rocksdb_cloud_fs_options_create() {
+  return new rocksdb_cloud_fs_options_t;
+}
+
+void rocksdb_cloud_fs_options_destroy(rocksdb_cloud_fs_options_t* opts) {
+  delete opts;
+}
+
+void rocksdb_cloud_fs_options_set_src_bucket(
+    rocksdb_cloud_fs_options_t* opts, rocksdb_cloud_bucket_options_t* bucket) {
+  opts->rep.src_bucket = bucket->rep;
+}
+
+void rocksdb_cloud_fs_options_set_dest_bucket(
+    rocksdb_cloud_fs_options_t* opts, rocksdb_cloud_bucket_options_t* bucket) {
+  opts->rep.dest_bucket = bucket->rep;
+}
+
+// CloudBucketOptions
+
+rocksdb_cloud_bucket_options_t* rocksdb_cloud_bucket_options_create() {
+  return new rocksdb_cloud_bucket_options_t;
+}
+
+void rocksdb_cloud_bucket_options_destroy(
+    rocksdb_cloud_bucket_options_t* opts) {
+  delete opts;
+}
+
+void rocksdb_cloud_bucket_options_set_bucket_name(
+    rocksdb_cloud_bucket_options_t* opts, const char* bucket_name) {
+  opts->rep.SetBucketName(std::string(bucket_name));
+}
+
+const char* rocksdb_cloud_bucket_options_get_bucket_name(
+    rocksdb_cloud_bucket_options_t* opts) {
+  return opts->rep.GetBucketName().c_str();
+}
+
+void rocksdb_cloud_bucket_options_set_region(
+    rocksdb_cloud_bucket_options_t* opts, const char* region) {
+  opts->rep.SetRegion(std::string(region));
+}
+
+const char* rocksdb_cloud_bucket_options_get_region(
+    rocksdb_cloud_bucket_options_t* opts) {
+  return opts->rep.GetRegion().c_str();
+}
+
+void rocksdb_cloud_bucket_options_set_object_path(
+    rocksdb_cloud_bucket_options_t* opts, const char* object_path) {
+  opts->rep.SetObjectPath(std::string(object_path));
+}
+
+const char* rocksdb_cloud_bucket_options_get_object_path(
+    rocksdb_cloud_bucket_options_t* opts) {
+  return opts->rep.GetObjectPath().c_str();
+}
+
+unsigned char rocksdb_cloud_bucket_options_is_valid(
+    rocksdb_cloud_bucket_options_t* opts) {
+  return opts->rep.IsValid();
+}
+
+// Cloud FS / Env
+
+rocksdb_cloud_fs_t* rocksdb_cloud_fs_create(rocksdb_cloud_fs_options_t* options,
+                                            char** errptr) {
+#ifdef USE_AWS
+  Aws::SDKOptions sdk_options;
+  Aws::InitAPI(sdk_options);
+
+  CloudFileSystem* cfs;
+  if (SaveError(errptr,
+                CloudFileSystemEnv::NewAwsFileSystem(
+                    FileSystem::Default(), options->rep, nullptr, &cfs))) {
+    return nullptr;
+  }
+
+  rocksdb_cloud_fs_t* result = new rocksdb_cloud_fs_t;
+  result->rep = cfs;
+  return result;
+#else
+  SaveError(errptr, Status::NotSupported("Cloud FS requires USE_AWS"));
+  return nullptr;
+#endif
+}
+
+void rocksdb_cloud_fs_destroy(rocksdb_cloud_fs_t* cfs) {
+  delete cfs->rep;
+  delete cfs;
+}
+
+rocksdb_env_t* rocksdb_cloud_env_create(rocksdb_cloud_fs_t* cfs) {
+  auto cloud_env =
+      CloudFileSystemEnv::NewCompositeEnvFromFs(cfs->rep, Env::Default());
+
+  rocksdb_env_t* result = new rocksdb_env_t;
+  result->rep = cloud_env.release();
+  result->is_default = false;
+  return result;
+}
+
+// CloudOptimisticTransactionDB
+
+rocksdb_cloud_otxn_db_t* rocksdb_cloud_otxn_db_open(
+    rocksdb_options_t* options, const char* name,
+    const char* persistent_cache_path,
+    const uint64_t persistent_cache_size_gb, char** errptr) {
+  CloudOptimisticTransactionDB* db;
+  if (SaveError(errptr, CloudOptimisticTransactionDB::Open(
+                            options->rep, std::string(name),
+                            std::string(persistent_cache_path),
+                            persistent_cache_size_gb, &db))) {
+    return nullptr;
+  }
+  rocksdb_cloud_otxn_db_t* result = new rocksdb_cloud_otxn_db_t;
+  result->rep = db;
+  return result;
+}
+
+rocksdb_cloud_otxn_db_t* rocksdb_cloud_otxn_db_open_column_families(
+    const rocksdb_options_t* options, const char* name,
+    const char* persistent_cache_path,
+    const uint64_t persistent_cache_size_gb, int num_column_families,
+    const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr) {
+  std::vector<ColumnFamilyDescriptor> column_families;
+  for (int i = 0; i < num_column_families; i++) {
+    column_families.push_back(ColumnFamilyDescriptor(
+        std::string(column_family_names[i]),
+        ColumnFamilyOptions(column_family_options[i]->rep)));
+  }
+
+  CloudOptimisticTransactionDB* db;
+  std::vector<ColumnFamilyHandle*> handles;
+  if (SaveError(errptr, CloudOptimisticTransactionDB::Open(
+                            options->rep, std::string(name), column_families,
+                            std::string(persistent_cache_path),
+                            persistent_cache_size_gb, &handles, &db))) {
+    return nullptr;
+  }
+
+  for (size_t i = 0; i < handles.size(); i++) {
+    rocksdb_column_family_handle_t* c_handle =
+        new rocksdb_column_family_handle_t;
+    c_handle->rep = handles[i];
+    column_family_handles[i] = c_handle;
+  }
+  rocksdb_cloud_otxn_db_t* result = new rocksdb_cloud_otxn_db_t;
+  result->rep = db;
+  return result;
+}
+
+void rocksdb_cloud_otxn_db_close(rocksdb_cloud_otxn_db_t* db) {
+  delete db->rep;
+  delete db;
+}
+
+rocksdb_optimistictransactiondb_t* rocksdb_cloud_otxn_db_get_txn_db(
+    rocksdb_cloud_otxn_db_t* db) {
+  OptimisticTransactionDB* otxn_db = db->rep->GetTxnDB();
+  if (otxn_db == nullptr) {
+    return nullptr;
+  }
+  rocksdb_optimistictransactiondb_t* result =
+      new rocksdb_optimistictransactiondb_t;
+  result->rep = otxn_db;
+  return result;
+}
+
+// CloudTransactionDB
+
+rocksdb_cloud_txn_db_t* rocksdb_cloud_txn_db_open(
+    rocksdb_options_t* options, rocksdb_transactiondb_options_t* txn_db_options,
+    const char* name, const char* persistent_cache_path,
+    const uint64_t persistent_cache_size_gb, char** errptr) {
+  CloudTransactionDB* db;
+  if (SaveError(errptr, CloudTransactionDB::Open(
+                            options->rep, txn_db_options->rep,
+                            std::string(name),
+                            std::string(persistent_cache_path),
+                            persistent_cache_size_gb, &db))) {
+    return nullptr;
+  }
+  rocksdb_cloud_txn_db_t* result = new rocksdb_cloud_txn_db_t;
+  result->rep = db;
+  return result;
+}
+
+rocksdb_cloud_txn_db_t* rocksdb_cloud_txn_db_open_column_families(
+    const rocksdb_options_t* options,
+    rocksdb_transactiondb_options_t* txn_db_options, const char* name,
+    const char* persistent_cache_path,
+    const uint64_t persistent_cache_size_gb, int num_column_families,
+    const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr) {
+  std::vector<ColumnFamilyDescriptor> column_families;
+  for (int i = 0; i < num_column_families; i++) {
+    column_families.push_back(ColumnFamilyDescriptor(
+        std::string(column_family_names[i]),
+        ColumnFamilyOptions(column_family_options[i]->rep)));
+  }
+
+  CloudTransactionDB* db;
+  std::vector<ColumnFamilyHandle*> handles;
+  if (SaveError(errptr,
+                CloudTransactionDB::Open(
+                    options->rep, txn_db_options->rep, std::string(name),
+                    column_families, std::string(persistent_cache_path),
+                    persistent_cache_size_gb, &handles, &db))) {
+    return nullptr;
+  }
+
+  for (size_t i = 0; i < handles.size(); i++) {
+    rocksdb_column_family_handle_t* c_handle =
+        new rocksdb_column_family_handle_t;
+    c_handle->rep = handles[i];
+    column_family_handles[i] = c_handle;
+  }
+  rocksdb_cloud_txn_db_t* result = new rocksdb_cloud_txn_db_t;
+  result->rep = db;
+  return result;
+}
+
+void rocksdb_cloud_txn_db_close(rocksdb_cloud_txn_db_t* db) {
+  delete db->rep;
+  delete db;
+}
+
+rocksdb_transactiondb_t* rocksdb_cloud_txn_db_get_txn_db(
+    rocksdb_cloud_txn_db_t* db) {
+  TransactionDB* txn_db = db->rep->GetTxnDB();
+  if (txn_db == nullptr) {
+    return nullptr;
+  }
+  rocksdb_transactiondb_t* result = new rocksdb_transactiondb_t;
+  result->rep = txn_db;
+  return result;
+}
+
+#endif  // ROCKSDB_CLOUD
 
 }  // end extern "C"
