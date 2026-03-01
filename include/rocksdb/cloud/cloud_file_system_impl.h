@@ -165,11 +165,13 @@ class CloudFileSystemImpl : public CloudFileSystem {
   // REQUIRES: cloud_manifest_ is not updated when calling this function
   IOStatus FindAllLiveFiles(const std::string& local_dbname,
                             std::vector<std::string>* live_sst_files,
+                            std::vector<std::string>* live_blob_files,
                             std::string* manifest_file) override;
 
   IOStatus FindLiveFilesFromLocalManifest(
       const std::string& manifest_file,
-      std::vector<std::string>* live_sst_files) override;
+      std::vector<std::string>* live_sst_files,
+      std::vector<std::string>* live_blob_files = nullptr) override;
 
   IOStatus extractParents(const std::string& bucket_name_prefix,
                           const DbidList& dbid_list, DbidParents* parents);
@@ -436,6 +438,10 @@ class CloudFileSystemImpl : public CloudFileSystem {
   // Remap SST file numbers to file names
   void RemapFileNumbers(const std::set<uint64_t>& file_numbers,
                         std::vector<std::string>* sst_file_names);
+
+  // Remap blob file numbers to file names
+  void RemapBlobFileNumbers(const std::set<uint64_t>& file_numbers,
+                            std::vector<std::string>* blob_file_names);
 
   // Fetch the cloud manifest based on the cookie
   IOStatus FetchCloudManifest(const std::string& local_dbname,
