@@ -110,6 +110,7 @@ LIB_SOURCES =                                                   \
   env/composite_env.cc                                          \
   env/env.cc                                                    \
   env/env_chroot.cc                                             \
+  encryption/encryption.cc                                      \
   env/env_encryption.cc                                         \
   env/env_posix.cc                                              \
   env/file_system.cc                                            \
@@ -531,6 +532,7 @@ TEST_MAIN_SOURCES =                                                     \
   db/db_clip_test.cc                                                    \
   db/db_dynamic_level_test.cc                                           \
   db/db_encryption_test.cc                                              \
+  encryption/encryption_test.cc                                         \
   db/db_etc3_test.cc                                                    \
   db/db_flush_test.cc                                                   \
   db/db_follower_test.cc						                                    \

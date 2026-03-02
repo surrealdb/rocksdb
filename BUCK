@@ -118,6 +118,7 @@ cpp_library_wrapper(name="rocksdb_lib", srcs=[
         "db/write_stall_stats.cc",
         "db/write_thread.cc",
         "db_stress_tool/db_stress_compression_manager.cc",
+        "encryption/encryption.cc",
         "env/composite_env.cc",
         "env/env.cc",
         "env/env_chroot.cc",
@@ -5082,6 +5083,12 @@ cpp_unittest_wrapper(name="deletefile_test",
 
 cpp_unittest_wrapper(name="dynamic_bloom_test",
             srcs=["util/dynamic_bloom_test.cc"],
+            deps=[":rocksdb_test_lib"],
+            extra_compiler_flags=[])
+
+
+cpp_unittest_wrapper(name="encryption_test",
+            srcs=["encryption/encryption_test.cc"],
             deps=[":rocksdb_test_lib"],
             extra_compiler_flags=[])
 

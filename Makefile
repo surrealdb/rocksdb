@@ -652,6 +652,7 @@ TESTS_PLATFORM_DEPENDENT := \
 	db_basic_test \
 	db_blob_basic_test \
 	db_encryption_test \
+	encryption_test \
 	external_sst_file_basic_test \
 	auto_roll_logger_test \
 	bloom_test \
@@ -1444,6 +1445,9 @@ db_with_timestamp_compaction_test: db/db_with_timestamp_compaction_test.o $(TEST
 	$(AM_LINK)
 
 db_encryption_test: $(OBJ_DIR)/db/db_encryption_test.o $(TEST_LIBRARY) $(LIBRARY)
+	$(AM_LINK)
+
+encryption_test: $(OBJ_DIR)/encryption/encryption_test.o $(TEST_LIBRARY) $(LIBRARY)
 	$(AM_LINK)
 
 db_test: $(OBJ_DIR)/db/db_test.o $(TEST_LIBRARY) $(LIBRARY)

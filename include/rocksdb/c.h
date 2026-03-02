@@ -4210,6 +4210,44 @@ rocksdb_cloud_txn_db_get_txn_db(rocksdb_cloud_txn_db_t* txn_db);
 
 #endif /* ROCKSDB_CLOUD */
 
+/* Encryption support -- requires OpenSSL */
+#ifdef OPENSSL
+
+typedef struct rocksdb_encryption_key_manager_t
+    rocksdb_encryption_key_manager_t;
+
+/* Create a KeyManager backed by callback functions.
+   get_file/new_file callbacks write encryption info through out-params:
+     method (int*), key (char**, size_t*), iv (char**, size_t*).
+   On error, callbacks set *errptr to a malloc'd error string.
+   The key and iv buffers returned by callbacks must be malloc'd;
+   RocksDB takes ownership and frees them. */
+extern ROCKSDB_LIBRARY_API rocksdb_encryption_key_manager_t*
+rocksdb_encryption_key_manager_create(
+    void* state, void (*destructor)(void*),
+    void (*get_file)(void* state, const char* fname, int* method, char** key,
+                     size_t* key_len, char** iv, size_t* iv_len,
+                     char** errptr),
+    void (*new_file)(void* state, const char* fname, int* method, char** key,
+                     size_t* key_len, char** iv, size_t* iv_len,
+                     char** errptr),
+    void (*delete_file)(void* state, const char* fname, char** errptr),
+    void (*link_file)(void* state, const char* src_fname,
+                      const char* dst_fname, char** errptr));
+
+extern ROCKSDB_LIBRARY_API void rocksdb_encryption_key_manager_destroy(
+    rocksdb_encryption_key_manager_t*);
+
+/* Create an Env that encrypts files using the given KeyManager.
+   The returned Env wraps base_env with encryption.
+   The caller takes ownership of the returned Env. */
+extern ROCKSDB_LIBRARY_API rocksdb_env_t*
+rocksdb_create_key_managed_encrypted_env(
+    rocksdb_env_t* base_env,
+    rocksdb_encryption_key_manager_t* key_manager);
+
+#endif /* OPENSSL */
+
 #ifdef __cplusplus
 } /* end extern "C" */
 #endif
