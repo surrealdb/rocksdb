@@ -798,6 +798,7 @@ set(SOURCES
         env/composite_env.cc
         env/env.cc
         env/env_chroot.cc
+        encryption/encryption.cc
         env/env_encryption.cc
         env/file_system.cc
         env/file_system_tracer.cc
@@ -1429,6 +1430,7 @@ if(WITH_TESTS)
         db/db_clip_test.cc
         db/db_dynamic_level_test.cc
         db/db_encryption_test.cc
+        encryption/encryption_test.cc
         db/db_etc3_test.cc
         db/db_flush_test.cc
         db/db_inplace_update_test.cc
