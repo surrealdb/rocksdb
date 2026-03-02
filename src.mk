@@ -362,6 +362,12 @@ CLOUD_SOURCES =                                                 \
   cloud/purge.cc                                                \
   db/db_impl/replication_codec.cc                               \
   db/replication_epoch_edit.cc                                   \
+  cloud/aws/aws_file_system.cc                                  \
+  cloud/aws/aws_s3.cc                                           \
+  cloud/aws/aws_retry.cc                                        \
+  cloud/gcp/gcp_cs.cc                                           \
+  cloud/gcp/gcp_file_system.cc                                  \
+  cloud/gcp/gcp_retry.cc                                        \
 
 CLOUD_TEST_SOURCES =                                            \
   cloud/db_cloud_test.cc                                        \

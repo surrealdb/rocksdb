@@ -200,6 +200,66 @@ TEST(CloudFileSystemTest, ConfigureS3Provider) {
 #endif
 }
 
+TEST(CloudFileSystemTest, ConfigureGcpEnv) {
+  std::unique_ptr<CloudFileSystem> cfs;
+
+  ConfigOptions config_options;
+  Status s = CloudFileSystemEnv::CreateFromString(
+      config_options, "id=gcp; keep_local_sst_files=true", &cfs);
+#ifdef USE_GCS
+  ASSERT_OK(s);
+  ASSERT_NE(cfs, nullptr);
+  ASSERT_STREQ(cfs->Name(), "gcp");
+  auto copts = cfs->GetOptions<CloudFileSystemOptions>();
+  ASSERT_NE(copts, nullptr);
+  ASSERT_TRUE(copts->keep_local_sst_files);
+  ASSERT_NE(cfs->GetStorageProvider(), nullptr);
+  ASSERT_STREQ(cfs->GetStorageProvider()->Name(),
+               CloudStorageProviderImpl::kGcs());
+#else
+  ASSERT_NOK(s);
+  ASSERT_EQ(cfs, nullptr);
+#endif
+}
+
+TEST(CloudFileSystemTest, ConfigureGcsProvider) {
+  std::unique_ptr<CloudFileSystem> cfs;
+
+  ConfigOptions config_options;
+  Status s = CloudFileSystemEnv::CreateFromString(config_options,
+                                                  "provider=gcs", &cfs);
+  ASSERT_NOK(s);
+  ASSERT_EQ(cfs, nullptr);
+
+#ifdef USE_GCS
+  ASSERT_OK(CloudFileSystemEnv::CreateFromString(
+      config_options, "id=gcp; provider=gcs", &cfs));
+  ASSERT_STREQ(cfs->Name(), "gcp");
+  ASSERT_NE(cfs->GetStorageProvider(), nullptr);
+  ASSERT_STREQ(cfs->GetStorageProvider()->Name(),
+               CloudStorageProviderImpl::kGcs());
+#endif
+}
+
+TEST(CloudFileSystemTest, CreateGcsProviderWithoutSdk) {
+#ifndef USE_GCS
+  std::unique_ptr<CloudStorageProvider> provider;
+  Status s = CloudStorageProviderImpl::CreateGcsProvider(&provider);
+  ASSERT_TRUE(s.IsNotSupported());
+  ASSERT_EQ(provider, nullptr);
+#endif
+}
+
+TEST(CloudFileSystemTest, NewGcpFileSystemWithoutSdk) {
+#ifndef USE_GCS
+  CloudFileSystem* cfs = nullptr;
+  Status s = CloudFileSystemEnv::NewGcpFileSystem(
+      FileSystem::Default(), CloudFileSystemOptions(), nullptr, &cfs);
+  ASSERT_TRUE(s.IsNotSupported());
+  ASSERT_EQ(cfs, nullptr);
+#endif
+}
+
 // --- BuildAncestorDbids tests (no cloud credentials required) ---
 
 TEST(BuildAncestorDbidsTest, SingleDbid) {
