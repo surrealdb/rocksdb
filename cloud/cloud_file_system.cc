@@ -11,6 +11,7 @@
 #include <unordered_map>
 
 #include "cloud/aws/aws_file_system.h"
+#include "cloud/gcp/gcp_file_system.h"
 #include "cloud/cloud_manifest.h"
 #include "cloud/db_cloud_impl.h"
 #include "cloud/filename.h"
@@ -440,6 +441,7 @@ int DoRegisterCloudObjects(ObjectLibrary& library, const std::string& arg) {
   count++;
 
   count += CloudFileSystemImpl::RegisterAwsObjects(library, arg);
+  count += CloudFileSystemImpl::RegisterGcsObjects(library, arg);
 
   return count;
 }
@@ -593,6 +595,56 @@ Status CloudFileSystemEnv::NewAwsFileSystem(
     cloud->info_log_ = logger;
 
     // start the purge thread only if there is a destination bucket
+    if (options.dest_bucket.IsValid() && options.run_purger) {
+      cloud->purge_thread_ = std::thread([cloud] { cloud->Purger(); });
+    }
+  }
+  return st;
+}
+#endif
+
+Status CloudFileSystemEnv::NewGcpFileSystem(
+    const std::shared_ptr<FileSystem>& base_fs,
+    const std::string& src_cloud_bucket, const std::string& src_cloud_object,
+    const std::string& src_cloud_region, const std::string& dest_cloud_bucket,
+    const std::string& dest_cloud_object, const std::string& dest_cloud_region,
+    const CloudFileSystemOptions& cloud_options,
+    const std::shared_ptr<Logger>& logger, CloudFileSystem** cfs) {
+  CloudFileSystemOptions options = cloud_options;
+  if (!src_cloud_bucket.empty())
+    options.src_bucket.SetBucketName(src_cloud_bucket);
+  if (!src_cloud_object.empty())
+    options.src_bucket.SetObjectPath(src_cloud_object);
+  if (!src_cloud_region.empty()) options.src_bucket.SetRegion(src_cloud_region);
+  if (!dest_cloud_bucket.empty())
+    options.dest_bucket.SetBucketName(dest_cloud_bucket);
+  if (!dest_cloud_object.empty())
+    options.dest_bucket.SetObjectPath(dest_cloud_object);
+  if (!dest_cloud_region.empty())
+    options.dest_bucket.SetRegion(dest_cloud_region);
+  return NewGcpFileSystem(base_fs, options, logger, cfs);
+}
+
+#ifndef USE_GCS
+Status CloudFileSystemEnv::NewGcpFileSystem(
+    const std::shared_ptr<FileSystem>& /*base_fs*/,
+    const CloudFileSystemOptions& /*options*/,
+    const std::shared_ptr<Logger>& /*logger*/, CloudFileSystem** /*cfs*/) {
+  return Status::NotSupported("RocksDB Cloud not compiled with GCS support");
+}
+#else
+Status CloudFileSystemEnv::NewGcpFileSystem(
+    const std::shared_ptr<FileSystem>& base_fs,
+    const CloudFileSystemOptions& options,
+    const std::shared_ptr<Logger>& logger, CloudFileSystem** cfs) {
+  CloudFileSystemEnv::RegisterCloudObjects();
+  options.Dump(logger.get());
+
+  Status st = GcpFileSystem::NewGcpFileSystem(base_fs, options, logger, cfs);
+  if (st.ok()) {
+    auto* cloud = static_cast<CloudFileSystemImpl*>(*cfs);
+    cloud->info_log_ = logger;
+
     if (options.dest_bucket.IsValid() && options.run_purger) {
       cloud->purge_thread_ = std::thread([cloud] { cloud->Purger(); });
     }

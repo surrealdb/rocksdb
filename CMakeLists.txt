@@ -443,6 +443,12 @@ if(WITH_CLOUD)
     include_directories(${AWSSDK_INCLUDE_DIRS})
     list(APPEND THIRDPARTY_LIBS ${AWSSDK_LIBRARIES})
   endif()
+  option(WITH_GCS "Build with GCS support" OFF)
+  if(WITH_GCS)
+    find_package(google_cloud_cpp_storage REQUIRED)
+    add_definitions(-DUSE_GCS)
+    list(APPEND THIRDPARTY_LIBS google-cloud-cpp::storage)
+  endif()
 endif()
 
 option(ASSERT_STATUS_CHECKED "build with assert status checked" OFF)
@@ -1150,16 +1156,14 @@ if(WITH_CLOUD)
     cloud/purge.cc
     db/db_impl/replication_codec.cc
     db/replication_epoch_edit.cc
+    cloud/aws/aws_file_system.cc
+    cloud/aws/aws_s3.cc
+    cloud/aws/aws_retry.cc
+    cloud/gcp/gcp_cs.cc
+    cloud/gcp/gcp_file_system.cc
+    cloud/gcp/gcp_retry.cc
   )
   list(APPEND SOURCES ${CLOUD_SOURCES})
-  if(WITH_AWS)
-    set(CLOUD_AWS_SOURCES
-      cloud/aws/aws_file_system.cc
-      cloud/aws/aws_s3.cc
-      cloud/aws/aws_retry.cc
-    )
-    list(APPEND SOURCES ${CLOUD_AWS_SOURCES})
-  endif()
 endif()
 
 set(ROCKSDB_STATIC_LIB rocksdb${ARTIFACT_SUFFIX})
@@ -1610,6 +1614,7 @@ if(WITH_TESTS)
         cloud/cloud_optimistic_transaction_db_test.cc
         cloud/cloud_transaction_db_test.cc
         cloud/db_cloud_test.cc
+        cloud/gcp/gcp_db_cloud_test.cc
       )
     endif()
   endif()
