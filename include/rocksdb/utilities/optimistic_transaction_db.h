@@ -80,6 +80,15 @@ struct OptimisticTransactionDBOptions {
   // an OccLockBuckets will be created using the count in occ_lock_buckets.
   // See MakeSharedOccLockBuckets()
   std::shared_ptr<OccLockBuckets> shared_lock_buckets;
+
+  // When true and a column family uses user-defined timestamps, optimistic
+  // transactions perform timestamp-based conflict validation at commit time
+  // in addition to sequence-number-based validation. A write conflict is
+  // detected if a key was written with a timestamp newer than the
+  // transaction's read timestamp.
+  //
+  // Default: true
+  bool enable_udt_validation = true;
 };
 
 // Range deletions (including those in `WriteBatch`es passed to `Write()`) are

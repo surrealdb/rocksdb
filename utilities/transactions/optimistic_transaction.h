@@ -8,6 +8,7 @@
 #include <stack>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "db/write_callback.h"
@@ -47,6 +48,35 @@ class OptimisticTransaction : public TransactionBaseImpl {
 
   Status SetName(const TransactionName& name) override;
 
+  Status SetReadTimestampForValidation(TxnTimestamp ts) override;
+
+  Status SetCommitTimestamp(TxnTimestamp ts) override;
+
+  TxnTimestamp GetCommitTimestamp() const override { return commit_timestamp_; }
+
+  using TransactionBaseImpl::Put;
+  Status Put(ColumnFamilyHandle* column_family, const Slice& key,
+             const Slice& value, const bool assume_tracked = false) override;
+  Status Put(ColumnFamilyHandle* column_family, const SliceParts& key,
+             const SliceParts& value,
+             const bool assume_tracked = false) override;
+
+  using TransactionBaseImpl::Delete;
+  Status Delete(ColumnFamilyHandle* column_family, const Slice& key,
+                const bool assume_tracked = false) override;
+  Status Delete(ColumnFamilyHandle* column_family, const SliceParts& key,
+                const bool assume_tracked = false) override;
+
+  using TransactionBaseImpl::SingleDelete;
+  Status SingleDelete(ColumnFamilyHandle* column_family, const Slice& key,
+                      const bool assume_tracked = false) override;
+  Status SingleDelete(ColumnFamilyHandle* column_family, const SliceParts& key,
+                      const bool assume_tracked = false) override;
+
+  using TransactionBaseImpl::Merge;
+  Status Merge(ColumnFamilyHandle* column_family, const Slice& key,
+               const Slice& value, const bool assume_tracked = false) override;
+
  protected:
   Status TryLock(ColumnFamilyHandle* column_family, const Slice& key,
                  bool read_only, bool exclusive, const bool do_validate = true,
@@ -54,6 +84,11 @@ class OptimisticTransaction : public TransactionBaseImpl {
 
  private:
   ROCKSDB_FIELD_UNUSED OptimisticTransactionDB* const txn_db_;
+
+  TxnTimestamp read_timestamp_{kMaxTxnTimestamp};
+  TxnTimestamp commit_timestamp_{kMaxTxnTimestamp};
+
+  std::unordered_set<uint32_t> cfs_with_ts_tracked_when_indexing_disabled_;
 
   friend class OptimisticTransactionCallback;
 
@@ -76,6 +111,13 @@ class OptimisticTransaction : public TransactionBaseImpl {
   Status CommitWithSerialValidate();
 
   Status CommitWithParallelValidate();
+
+  Status MaybeStampWriteBatchTimestamps();
+
+  template <typename TKey, typename TOperation>
+  Status Operate(ColumnFamilyHandle* column_family, const TKey& key,
+                 const bool do_validate, const bool assume_tracked,
+                 TOperation&& operation);
 };
 
 // Used at commit time to trigger transaction validation
