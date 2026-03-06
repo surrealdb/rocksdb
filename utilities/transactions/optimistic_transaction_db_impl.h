@@ -47,7 +47,8 @@ class OptimisticTransactionDBImpl : public OptimisticTransactionDB {
       std::unique_ptr<DB>&& db,
       const OptimisticTransactionDBOptions& occ_options)
       : OptimisticTransactionDB(std::move(db)),
-        validate_policy_(occ_options.validate_policy) {
+        validate_policy_(occ_options.validate_policy),
+        enable_udt_validation_(occ_options.enable_udt_validation) {
     InitLockBuckets(occ_options);
   }
 
@@ -55,7 +56,8 @@ class OptimisticTransactionDBImpl : public OptimisticTransactionDB {
       std::shared_ptr<DB> db,
       const OptimisticTransactionDBOptions& occ_options)
       : OptimisticTransactionDB(std::move(db)),
-        validate_policy_(occ_options.validate_policy) {
+        validate_policy_(occ_options.validate_policy),
+        enable_udt_validation_(occ_options.enable_udt_validation) {
     InitLockBuckets(occ_options);
   }
 
@@ -83,6 +85,8 @@ class OptimisticTransactionDBImpl : public OptimisticTransactionDB {
 
   OccValidationPolicy GetValidatePolicy() const { return validate_policy_; }
 
+  bool GetEnableUdtValidation() const { return enable_udt_validation_; }
+
   port::Mutex& GetLockBucket(const Slice& key, uint64_t seed) {
     return bucketed_locks_->GetLockBucket(key, seed);
   }
@@ -103,6 +107,8 @@ class OptimisticTransactionDBImpl : public OptimisticTransactionDB {
   std::shared_ptr<OccLockBucketsImplBase> bucketed_locks_;
 
   const OccValidationPolicy validate_policy_;
+
+  const bool enable_udt_validation_;
 
   void ReinitializeTransaction(Transaction* txn,
                                const WriteOptions& write_options,

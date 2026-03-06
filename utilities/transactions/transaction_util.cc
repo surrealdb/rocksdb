@@ -13,6 +13,7 @@
 #include "rocksdb/status.h"
 #include "rocksdb/utilities/write_batch_with_index.h"
 #include "util/cast_util.h"
+#include "util/coding.h"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -151,9 +152,9 @@ Status TransactionUtil::CheckKey(DBImpl* db_impl, SuperVersion* sv,
   return result;
 }
 
-Status TransactionUtil::CheckKeysForConflicts(DBImpl* db_impl,
-                                              const LockTracker& tracker,
-                                              bool cache_only) {
+Status TransactionUtil::CheckKeysForConflicts(
+    DBImpl* db_impl, const LockTracker& tracker, bool cache_only,
+    TxnTimestamp read_timestamp, bool enable_udt_validation) {
   Status result;
 
   std::unique_ptr<LockTracker::ColumnFamilyIterator> cf_it(
@@ -172,6 +173,20 @@ Status TransactionUtil::CheckKeysForConflicts(DBImpl* db_impl,
     SequenceNumber earliest_seq =
         db_impl->GetEarliestMemTableSequenceNumber(sv, true);
 
+    // Build the read timestamp string for this CF if applicable.
+    std::string read_ts_buf;
+    const std::string* read_ts_ptr = nullptr;
+    if (read_timestamp < kMaxTxnTimestamp) {
+      const Comparator* const ucmp = sv->cfd->user_comparator();
+      assert(ucmp);
+      size_t ts_sz = ucmp->timestamp_size();
+      if (ts_sz > 0) {
+        assert(ts_sz == sizeof(TxnTimestamp));
+        PutFixed64(&read_ts_buf, read_timestamp);
+        read_ts_ptr = &read_ts_buf;
+      }
+    }
+
     // For each of the keys in this transaction, check to see if someone has
     // written to this key since the start of the transaction.
     std::unique_ptr<LockTracker::KeyIterator> key_it(
@@ -182,11 +197,10 @@ Status TransactionUtil::CheckKeysForConflicts(DBImpl* db_impl,
       PointLockStatus status = tracker.GetPointLockStatus(cf, key);
       const SequenceNumber key_seq = status.seq;
 
-      // TODO: support timestamp-based conflict checking.
-      // CheckKeysForConflicts() is currently used only by optimistic
-      // transactions.
-      result = CheckKey(db_impl, sv, earliest_seq, key_seq, key,
-                        /*read_ts=*/nullptr, cache_only);
+      result = CheckKey(db_impl, sv, earliest_seq, key_seq, key, read_ts_ptr,
+                        cache_only, /*snap_checker=*/nullptr,
+                        /*min_uncommitted=*/kMaxSequenceNumber,
+                        enable_udt_validation);
       if (!result.ok()) {
         break;
       }

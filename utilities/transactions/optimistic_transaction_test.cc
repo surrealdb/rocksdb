@@ -12,12 +12,14 @@
 #include "db/db_impl/db_impl.h"
 #include "db/db_test_util.h"
 #include "port/port.h"
+#include "rocksdb/comparator.h"
 #include "rocksdb/db.h"
 #include "rocksdb/perf_context.h"
 #include "rocksdb/utilities/optimistic_transaction_db.h"
 #include "rocksdb/utilities/transaction.h"
 #include "test_util/sync_point.h"
 #include "test_util/testharness.h"
+#include "test_util/testutil.h"
 #include "test_util/transaction_test_util.h"
 #include "util/crc32c.h"
 #include "util/random.h"
@@ -1691,8 +1693,155 @@ TEST_P(OptimisticTransactionTest, TimestampedSnapshotSetCommitTs) {
   std::unique_ptr<Transaction> txn(txn_db->BeginTransaction(WriteOptions()));
   ASSERT_OK(txn->Put("a", "v"));
   std::shared_ptr<const Snapshot> snapshot;
+  // Default CF has no timestamps, so the commit succeeds without needing one.
   Status s = txn->CommitAndTryCreateSnapshot(nullptr, /*ts=*/100, &snapshot);
-  ASSERT_TRUE(s.IsNotSupported());
+  ASSERT_OK(s);
+}
+
+TEST_P(OptimisticTransactionTest, UDTBasicCommit) {
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+
+  options.comparator = test::BytewiseComparatorWithU64TsWrapper();
+  OpenImpl(options, occ_opts, dbname, &txn_db);
+
+  std::unique_ptr<Transaction> txn(txn_db->BeginTransaction(WriteOptions()));
+  ASSERT_OK(txn->Put("key1", "val1"));
+  ASSERT_OK(txn->SetCommitTimestamp(100));
+  ASSERT_OK(txn->Commit());
+
+  std::string ts_buf;
+  Slice read_ts = EncodeU64Ts(100, &ts_buf);
+  ReadOptions read_opts;
+  read_opts.timestamp = &read_ts;
+  std::string value;
+  ASSERT_OK(txn_db->Get(read_opts, "key1", &value));
+  ASSERT_EQ("val1", value);
+
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+  options.comparator = BytewiseComparator();
+  Reopen();
+}
+
+TEST_P(OptimisticTransactionTest, UDTMissingCommitTimestamp) {
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+
+  options.comparator = test::BytewiseComparatorWithU64TsWrapper();
+  OpenImpl(options, occ_opts, dbname, &txn_db);
+
+  std::unique_ptr<Transaction> txn(txn_db->BeginTransaction(WriteOptions()));
+  ASSERT_OK(txn->Put("key1", "val1"));
+  Status s = txn->Commit();
+  ASSERT_TRUE(s.IsInvalidArgument());
+
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+  options.comparator = BytewiseComparator();
+  Reopen();
+}
+
+TEST_P(OptimisticTransactionTest, UDTCommitTimestampValidation) {
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+
+  options.comparator = test::BytewiseComparatorWithU64TsWrapper();
+  OpenImpl(options, occ_opts, dbname, &txn_db);
+
+  std::unique_ptr<Transaction> txn(txn_db->BeginTransaction(WriteOptions()));
+  ASSERT_OK(txn->SetReadTimestampForValidation(100));
+  ASSERT_TRUE(txn->SetCommitTimestamp(100).IsInvalidArgument());
+  ASSERT_TRUE(txn->SetCommitTimestamp(50).IsInvalidArgument());
+  ASSERT_OK(txn->SetCommitTimestamp(101));
+
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+  options.comparator = BytewiseComparator();
+  Reopen();
+}
+
+TEST_P(OptimisticTransactionTest, UDTReadTimestampCannotDecrease) {
+  std::unique_ptr<Transaction> txn(txn_db->BeginTransaction(WriteOptions()));
+  ASSERT_OK(txn->SetReadTimestampForValidation(100));
+  ASSERT_TRUE(txn->SetReadTimestampForValidation(50).IsInvalidArgument());
+  ASSERT_OK(txn->SetReadTimestampForValidation(200));
+}
+
+TEST_P(OptimisticTransactionTest, UDTTimestampConflictDetection) {
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+
+  options.comparator = test::BytewiseComparatorWithU64TsWrapper();
+  OpenImpl(options, occ_opts, dbname, &txn_db);
+
+  // Write a key at timestamp 20.
+  {
+    std::unique_ptr<Transaction> txn0(txn_db->BeginTransaction(WriteOptions()));
+    ASSERT_OK(txn0->Put("key1", "val_ts20"));
+    ASSERT_OK(txn0->SetCommitTimestamp(20));
+    ASSERT_OK(txn0->Commit());
+  }
+
+  // Transaction reading at timestamp 10 should conflict since the key was
+  // written with a newer timestamp (20 > 10).
+  {
+    std::unique_ptr<Transaction> txn1(txn_db->BeginTransaction(WriteOptions()));
+    ASSERT_OK(txn1->SetReadTimestampForValidation(10));
+    ASSERT_OK(txn1->Put("key1", "val_conflict"));
+    ASSERT_OK(txn1->SetCommitTimestamp(30));
+    Status s = txn1->Commit();
+    ASSERT_TRUE(s.IsBusy()) << s.ToString();
+  }
+
+  // Transaction reading at timestamp 20 should not conflict.
+  {
+    std::unique_ptr<Transaction> txn2(txn_db->BeginTransaction(WriteOptions()));
+    ASSERT_OK(txn2->SetReadTimestampForValidation(20));
+    ASSERT_OK(txn2->Put("key1", "val_ok"));
+    ASSERT_OK(txn2->SetCommitTimestamp(30));
+    ASSERT_OK(txn2->Commit());
+  }
+
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+  options.comparator = BytewiseComparator();
+  Reopen();
+}
+
+TEST_P(OptimisticTransactionTest, UDTMixedCFs) {
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+
+  options.create_if_missing = true;
+  OpenImpl(options, occ_opts, dbname, &txn_db);
+
+  ColumnFamilyOptions cf_opts;
+  cf_opts.comparator = test::BytewiseComparatorWithU64TsWrapper();
+  ColumnFamilyHandle* cfh = nullptr;
+  ASSERT_OK(txn_db->CreateColumnFamily(cf_opts, "ts_cf", &cfh));
+
+  std::unique_ptr<Transaction> txn(txn_db->BeginTransaction(WriteOptions()));
+  ASSERT_OK(txn->Put("default_key", "default_val"));
+  ASSERT_OK(txn->Put(cfh, "ts_key", "ts_val"));
+  ASSERT_OK(txn->SetCommitTimestamp(50));
+  ASSERT_OK(txn->Commit());
+
+  std::string value;
+  ASSERT_OK(txn_db->Get(ReadOptions(), "default_key", &value));
+  ASSERT_EQ("default_val", value);
+
+  std::string ts_buf;
+  Slice read_ts = EncodeU64Ts(50, &ts_buf);
+  ReadOptions read_opts;
+  read_opts.timestamp = &read_ts;
+  ASSERT_OK(txn_db->Get(read_opts, cfh, "ts_key", &value));
+  ASSERT_EQ("ts_val", value);
+
+  delete cfh;
+  txn_db.reset();
+  ASSERT_OK(DestroyDB(dbname, options));
+  Reopen();
 }
 
 TEST_P(OptimisticTransactionTest, PutEntitySuccess) {
