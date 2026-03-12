@@ -96,6 +96,14 @@ void CloudFileSystemOptions::Dump(Logger* log) const {
          background_wal_sync_to_cloud);
   Header(log, "  COptions.background_wal_sync_interval_ms: %" PRIu64,
          background_wal_sync_interval_ms);
+  Header(log, "             COptions.fallback_buckets count: %zu",
+         fallback_buckets.size());
+  for (size_t i = 0; i < fallback_buckets.size(); ++i) {
+    Header(log, "           COptions.fallback_buckets[%zu].bucket: %s", i,
+           fallback_buckets[i].GetBucketName().c_str());
+    Header(log, "           COptions.fallback_buckets[%zu].path: %s", i,
+           fallback_buckets[i].GetObjectPath().c_str());
+  }
 }
 
 bool CloudFileSystemOptions::GetNameFromEnvironment(const char* name,

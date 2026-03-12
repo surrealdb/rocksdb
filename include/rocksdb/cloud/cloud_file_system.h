@@ -400,6 +400,13 @@ class CloudFileSystemOptions {
   // Default: 0 (disabled -- use keep_local_sst_files as-is)
   uint64_t local_sst_cache_size = 0;
 
+  // Ordered list of additional bucket/path locations to search when an SST
+  // file is not found in dest_bucket or src_bucket. Searched in order after
+  // dest and src. Typically set by the cloud control plane to represent
+  // parent branch object paths for zero-copy database branching.
+  // Default: empty
+  std::vector<BucketOptions> fallback_buckets;
+
   // If true, WAL (log) files are written to the local filesystem.
   // When false and a Kafka or cloud WAL sync mode is enabled, WAL files
   // are not stored locally.
