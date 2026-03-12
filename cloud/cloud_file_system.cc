@@ -3,6 +3,9 @@
 #ifndef ROCKSDB_LITE
 
 #include "rocksdb/cloud/cloud_file_system.h"
+
+#include <cinttypes>
+
 #ifndef _WIN32_WINNT
 #include <unistd.h>
 #else
@@ -67,6 +70,8 @@ void CloudFileSystemOptions::Dump(Logger* log) const {
          number_objects_listed_in_one_iteration);
   Header(log, "   COptions.use_direct_io_for_cloud_download: %d",
          use_direct_io_for_cloud_download);
+  Header(log, "              COptions.local_sst_cache_size: %" PRIu64,
+         local_sst_cache_size);
   Header(log, "        COptions.roll_cloud_manifest_on_open: %d",
          roll_cloud_manifest_on_open);
   Header(log, "                     COptions.cookie_on_open: %s",
@@ -79,6 +84,18 @@ void CloudFileSystemOptions::Dump(Logger* log) const {
     Header(log, "          COptions.cloud_file_deletion_delay: %lld",
            static_cast<long long>(cloud_file_deletion_delay->count()));
   }
+  Header(log, "              COptions.keep_local_log_files: %d",
+         keep_local_log_files);
+  Header(log, "            COptions.kafka_wal_sync_mode: %d",
+         static_cast<int>(kafka_wal_sync_mode));
+  Header(log, "         COptions.kafka_bootstrap_servers: %s",
+         kafka_bootstrap_servers.c_str());
+  Header(log, "             COptions.kafka_topic_prefix: %s",
+         kafka_topic_prefix.c_str());
+  Header(log, "     COptions.background_wal_sync_to_cloud: %d",
+         background_wal_sync_to_cloud);
+  Header(log, "  COptions.background_wal_sync_interval_ms: %" PRIu64,
+         background_wal_sync_interval_ms);
 }
 
 bool CloudFileSystemOptions::GetNameFromEnvironment(const char* name,
@@ -324,6 +341,27 @@ const std::unordered_map<std::string, OptionTypeInfo>
           OptionType::kBoolean}},
         {"purger_periodicity_ms",
          {offset_of(&CloudFileSystemOptions::purger_periodicity_millis),
+          OptionType::kUInt64T}},
+        {"local_sst_cache_size",
+         {offset_of(&CloudFileSystemOptions::local_sst_cache_size),
+          OptionType::kUInt64T}},
+        {"keep_local_log_files",
+         {offset_of(&CloudFileSystemOptions::keep_local_log_files),
+          OptionType::kBoolean}},
+        {"kafka_wal_sync_mode",
+         {offset_of(&CloudFileSystemOptions::kafka_wal_sync_mode),
+          OptionType::kUInt32T}},
+        {"kafka_bootstrap_servers",
+         {offset_of(&CloudFileSystemOptions::kafka_bootstrap_servers),
+          OptionType::kString}},
+        {"kafka_topic_prefix",
+         {offset_of(&CloudFileSystemOptions::kafka_topic_prefix),
+          OptionType::kString}},
+        {"background_wal_sync_to_cloud",
+         {offset_of(&CloudFileSystemOptions::background_wal_sync_to_cloud),
+          OptionType::kBoolean}},
+        {"background_wal_sync_interval_ms",
+         {offset_of(&CloudFileSystemOptions::background_wal_sync_interval_ms),
           OptionType::kUInt64T}},
 
         {"provider",

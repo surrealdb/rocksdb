@@ -64,6 +64,13 @@ enum CloudType : unsigned char {
   kCloudEnd = 0x5,
 };
 
+// Controls when WAL records are published to Kafka.
+enum class WalKafkaSyncMode : unsigned char {
+  kNone = 0,       // No Kafka WAL sync (default)
+  kPerAppend = 1,  // Publish to Kafka on every Append()
+  kPerSync = 2,    // Publish to Kafka on every Sync()/fsync
+};
+
 // Type of AWS access credentials
 enum class AwsAccessType {
   kUndefined,  // Use AWS SDK's default credential chain
@@ -386,6 +393,43 @@ class CloudFileSystemOptions {
   // Default: 1 hour
   std::optional<std::chrono::seconds> cloud_file_deletion_delay;
 
+  // Maximum total bytes of SST/blob files cached locally.
+  // When set (> 0), keep_local_sst_files is implicitly true, and
+  // the least-recently-accessed files are evicted when over this limit.
+  // Evicted files remain in cloud storage and are re-downloaded on demand.
+  // Default: 0 (disabled -- use keep_local_sst_files as-is)
+  uint64_t local_sst_cache_size = 0;
+
+  // If true, WAL (log) files are written to the local filesystem.
+  // When false and a Kafka or cloud WAL sync mode is enabled, WAL files
+  // are not stored locally.
+  // Default: true
+  bool keep_local_log_files = true;
+
+  // Controls whether and when WAL records are published to Kafka.
+  // Requires USE_KAFKA at build time.
+  // Default: kNone (disabled)
+  WalKafkaSyncMode kafka_wal_sync_mode = WalKafkaSyncMode::kNone;
+
+  // Kafka bootstrap servers (e.g. "broker1:9092,broker2:9092").
+  // Required when kafka_wal_sync_mode != kNone.
+  std::string kafka_bootstrap_servers;
+
+  // Prefix for the Kafka topic name. The full topic is
+  // "<prefix>.<dest_bucket_name>".
+  // Default: "rocksdb-wal"
+  std::string kafka_topic_prefix = "rocksdb-wal";
+
+  // If true, WAL files are periodically uploaded to cloud object storage
+  // (S3/GCS) in the background via CloudScheduler.
+  // Default: false
+  bool background_wal_sync_to_cloud = false;
+
+  // Interval in milliseconds between background WAL uploads when
+  // background_wal_sync_to_cloud is true.
+  // Default: 5000 (5 seconds)
+  uint64_t background_wal_sync_interval_ms = 5000;
+
   // Type info map for this class.
   static const std::unordered_map<std::string, OptionTypeInfo>
       cloud_fs_option_type_info;
@@ -408,7 +452,14 @@ class CloudFileSystemOptions {
       bool _roll_cloud_manifest_on_open = true,
       std::string _cookie_on_open = "", std::string _new_cookie_on_open = "",
       bool _delete_cloud_invisible_files_on_open = true,
-      std::chrono::seconds _cloud_file_deletion_delay = std::chrono::hours(1))
+      std::chrono::seconds _cloud_file_deletion_delay = std::chrono::hours(1),
+      uint64_t _local_sst_cache_size = 0,
+      bool _keep_local_log_files = true,
+      WalKafkaSyncMode _kafka_wal_sync_mode = WalKafkaSyncMode::kNone,
+      std::string _kafka_bootstrap_servers = "",
+      std::string _kafka_topic_prefix = "rocksdb-wal",
+      bool _background_wal_sync_to_cloud = false,
+      uint64_t _background_wal_sync_interval_ms = 5000)
       : keep_local_sst_files(_keep_local_sst_files),
         purger_periodicity_millis(_purger_periodicity_millis),
         validate_filesize(_validate_filesize),
@@ -432,7 +483,14 @@ class CloudFileSystemOptions {
         new_cookie_on_open(_new_cookie_on_open),
         delete_cloud_invisible_files_on_open(
             _delete_cloud_invisible_files_on_open),
-        cloud_file_deletion_delay(_cloud_file_deletion_delay) {
+        cloud_file_deletion_delay(_cloud_file_deletion_delay),
+        local_sst_cache_size(_local_sst_cache_size),
+        keep_local_log_files(_keep_local_log_files),
+        kafka_wal_sync_mode(_kafka_wal_sync_mode),
+        kafka_bootstrap_servers(std::move(_kafka_bootstrap_servers)),
+        kafka_topic_prefix(std::move(_kafka_topic_prefix)),
+        background_wal_sync_to_cloud(_background_wal_sync_to_cloud),
+        background_wal_sync_interval_ms(_background_wal_sync_interval_ms) {
     (void)_cloud_type;
   }
 
@@ -625,6 +683,11 @@ class CloudFileSystem : public FileSystem {
 
   virtual Logger* GetLogger() const = 0;
   virtual void SetLogger(std::shared_ptr<Logger>) = 0;
+
+  // Called when an SST/blob file has been written locally and uploaded to
+  // cloud storage. Used by the local SST cache to track file sizes.
+  virtual void OnLocalSstFileCreated(const std::string& /*fname*/,
+                                     uint64_t /*size*/) {}
 };
 
 //

@@ -1150,11 +1150,13 @@ if(WITH_CLOUD)
     cloud/cloud_manifest.cc
     cloud/cloud_scheduler.cc
     cloud/cloud_file_deletion_scheduler.cc
+    cloud/cloud_wal_controller.cc
     cloud/db_cloud_impl.cc
     cloud/cloud_optimistic_transaction_db_impl.cc
     cloud/cloud_transaction_db_impl.cc
     cloud/manifest_reader.cc
     cloud/purge.cc
+    cloud/local_sst_cache.cc
     db/db_impl/replication_codec.cc
     db/replication_epoch_edit.cc
     cloud/aws/aws_file_system.cc
@@ -1165,6 +1167,14 @@ if(WITH_CLOUD)
     cloud/gcp/gcp_retry.cc
   )
   list(APPEND SOURCES ${CLOUD_SOURCES})
+
+  option(WITH_KAFKA "Build with Kafka WAL support" OFF)
+  if(WITH_KAFKA)
+    find_package(RdKafka REQUIRED)
+    add_definitions(-DUSE_KAFKA)
+    list(APPEND SOURCES cloud/kafka_wal.cc)
+    list(APPEND THIRDPARTY_LIBS RdKafka::rdkafka RdKafka::rdkafka++)
+  endif()
 endif()
 
 set(ROCKSDB_STATIC_LIB rocksdb${ARTIFACT_SUFFIX})
@@ -1616,6 +1626,7 @@ if(WITH_TESTS)
         cloud/cloud_optimistic_transaction_db_test.cc
         cloud/cloud_transaction_db_test.cc
         cloud/db_cloud_test.cc
+        cloud/local_sst_cache_test.cc
         cloud/gcp/gcp_db_cloud_test.cc
       )
     endif()

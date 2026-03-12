@@ -3985,6 +3985,14 @@ extern ROCKSDB_LIBRARY_API uint64_t
 rocksdb_cloud_fs_options_get_purger_periodicity_millis(
     rocksdb_cloud_fs_options_t* opts);
 
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_local_sst_cache_size(
+    rocksdb_cloud_fs_options_t* opts, uint64_t val);
+
+extern ROCKSDB_LIBRARY_API uint64_t
+rocksdb_cloud_fs_options_get_local_sst_cache_size(
+    rocksdb_cloud_fs_options_t* opts);
+
 extern ROCKSDB_LIBRARY_API void rocksdb_cloud_fs_options_set_request_timeout_ms(
     rocksdb_cloud_fs_options_t* opts, uint64_t val);
 
@@ -4036,6 +4044,56 @@ extern ROCKSDB_LIBRARY_API void rocksdb_cloud_fs_options_set_new_cookie_on_open(
 
 extern ROCKSDB_LIBRARY_API const char*
 rocksdb_cloud_fs_options_get_new_cookie_on_open(
+    rocksdb_cloud_fs_options_t* opts);
+
+/* Cloud WAL options */
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_keep_local_log_files(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val);
+
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_cloud_fs_options_get_keep_local_log_files(
+    rocksdb_cloud_fs_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_kafka_wal_sync_mode(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val);
+
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_cloud_fs_options_get_kafka_wal_sync_mode(
+    rocksdb_cloud_fs_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_kafka_bootstrap_servers(
+    rocksdb_cloud_fs_options_t* opts, const char* val);
+
+extern ROCKSDB_LIBRARY_API const char*
+rocksdb_cloud_fs_options_get_kafka_bootstrap_servers(
+    rocksdb_cloud_fs_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_kafka_topic_prefix(
+    rocksdb_cloud_fs_options_t* opts, const char* val);
+
+extern ROCKSDB_LIBRARY_API const char*
+rocksdb_cloud_fs_options_get_kafka_topic_prefix(
+    rocksdb_cloud_fs_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_background_wal_sync_to_cloud(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val);
+
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_cloud_fs_options_get_background_wal_sync_to_cloud(
+    rocksdb_cloud_fs_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_background_wal_sync_interval_ms(
+    rocksdb_cloud_fs_options_t* opts, uint64_t val);
+
+extern ROCKSDB_LIBRARY_API uint64_t
+rocksdb_cloud_fs_options_get_background_wal_sync_interval_ms(
     rocksdb_cloud_fs_options_t* opts);
 
 /* Cloud bucket options */

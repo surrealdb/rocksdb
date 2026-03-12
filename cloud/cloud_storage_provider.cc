@@ -184,7 +184,6 @@ IOStatus CloudStorageWritableFileImpl::Close(const IOOptions& opts,
       return status_;
     }
 
-    // delete local file
     if (!cfs_->GetCloudFileSystemOptions().keep_local_sst_files) {
       status_ = cfs_->GetBaseFileSystem()->DeleteFile(fname_, opts, dbg);
       if (!status_.ok()) {
@@ -193,6 +192,11 @@ IOStatus CloudStorageWritableFileImpl::Close(const IOOptions& opts,
             Name(), fname_.c_str());
         return status_;
       }
+    } else {
+      uint64_t fsize = 0;
+      cfs_->GetBaseFileSystem()->GetFileSize(fname_, IOOptions(), &fsize,
+                                             nullptr);
+      cfs_->OnLocalSstFileCreated(fname_, fsize);
     }
     Log(InfoLogLevel::DEBUG_LEVEL, cfs_->GetLogger(),
         "[%s] CloudWritableFile closed file %s", Name(), fname_.c_str());
