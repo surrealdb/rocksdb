@@ -9265,6 +9265,30 @@ uint64_t rocksdb_cloud_fs_options_get_background_wal_sync_interval_ms(
   return opts->rep.background_wal_sync_interval_ms;
 }
 
+// Cloud bandwidth throttling
+
+void rocksdb_cloud_fs_options_set_cloud_upload_rate_limiter(
+    rocksdb_cloud_fs_options_t* opts, int64_t rate_bytes_per_sec,
+    int64_t refill_period_us, int32_t fairness) {
+  if (rate_bytes_per_sec <= 0) {
+    opts->rep.cloud_upload_rate_limiter.reset();
+  } else {
+    opts->rep.cloud_upload_rate_limiter.reset(
+        NewGenericRateLimiter(rate_bytes_per_sec, refill_period_us, fairness));
+  }
+}
+
+void rocksdb_cloud_fs_options_set_cloud_download_rate_limiter(
+    rocksdb_cloud_fs_options_t* opts, int64_t rate_bytes_per_sec,
+    int64_t refill_period_us, int32_t fairness) {
+  if (rate_bytes_per_sec <= 0) {
+    opts->rep.cloud_download_rate_limiter.reset();
+  } else {
+    opts->rep.cloud_download_rate_limiter.reset(
+        NewGenericRateLimiter(rate_bytes_per_sec, refill_period_us, fairness));
+  }
+}
+
 // Cloud fallback bucket options
 
 void rocksdb_cloud_fs_options_add_fallback_bucket(

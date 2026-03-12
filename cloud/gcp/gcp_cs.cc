@@ -8,6 +8,7 @@
 
 #include "cloud/filename.h"
 #include "cloud/gcp/gcp_file_system.h"
+#include "cloud/rate_limited_stream.h"
 #include "rocksdb/cloud/cloud_file_system.h"
 #include "rocksdb/cloud/cloud_storage_provider_impl.h"
 #include "rocksdb/convenience.h"
@@ -253,6 +254,8 @@ class GCSClientWrapper {
     return cloud_request_callback_.get();
   }
 
+  google::cloud::storage::Client* GetClient() { return client_.get(); }
+
  private:
   std::shared_ptr<google::cloud::storage::Client> client_;
   std::shared_ptr<CloudRequestCallback> cloud_request_callback_;
@@ -281,10 +284,19 @@ class GcsReadableFile : public CloudStorageReadableFileImpl {
     return max_size;
   }
 
+  void SetDownloadRateLimiter(RateLimiter* limiter) {
+    download_rate_limiter_ = limiter;
+  }
+
   IOStatus DoCloudRead(uint64_t offset, size_t n,
                        const IOOptions& /*options*/, char* scratch,
                        uint64_t* bytes_read,
                        IODebugContext* /*dbg*/) const override {
+    if (download_rate_limiter_ && n > 0) {
+      download_rate_limiter_->Request(
+          static_cast<int64_t>(n), Env::IOPriority::IO_LOW,
+          nullptr /* stats */, RateLimiter::OpType::kRead);
+    }
     auto status = gcs_client_->GetCloudObject(bucket_, fname_, offset, n,
                                               scratch, bytes_read);
     if (!status.ok()) {
@@ -306,6 +318,7 @@ class GcsReadableFile : public CloudStorageReadableFileImpl {
  private:
   std::shared_ptr<GCSClientWrapper> gcs_client_;
   std::string content_hash_;
+  RateLimiter* download_rate_limiter_ = nullptr;
 };
 
 /******************** GcsWritableFile ******************/
@@ -562,8 +575,13 @@ IOStatus GcsStorageProvider::DoNewCloudReadableFile(
     std::unique_ptr<CloudStorageReadableFile>* result,
     IODebugContext* /*dbg*/) {
   auto normalized_path = normalize_object_path(fname);
-  result->reset(new GcsReadableFile(gcs_client_, cfs_->GetLogger(), bucket,
-                                    normalized_path, fsize, content_hash));
+  auto* file = new GcsReadableFile(gcs_client_, cfs_->GetLogger(), bucket,
+                                   normalized_path, fsize, content_hash);
+  auto& dl_limiter = cfs_->GetCloudFileSystemOptions().cloud_download_rate_limiter;
+  if (dl_limiter) {
+    file->SetDownloadRateLimiter(dl_limiter.get());
+  }
+  result->reset(file);
   return IOStatus::OK();
 }
 
@@ -612,20 +630,59 @@ IOStatus GcsStorageProvider::DoGetCloudObject(
     const std::string& bucket_name, const std::string& object_path,
     const std::string& destination, uint64_t* remote_size) {
   auto normalized_path = normalize_object_path(object_path);
-  auto get = gcs_client_->DownloadFile(bucket_name, normalized_path,
-                                       destination, remote_size);
-  if (!get.ok()) {
-    std::string errmsg = get.message();
-    if (IsNotFound(get)) {
-      Log(InfoLogLevel::ERROR_LEVEL, cfs_->GetLogger(),
-          "[gcs] GetObject %s/%s error %s.", bucket_name.c_str(),
-          object_path.c_str(), errmsg.c_str());
-      return IOStatus::NotFound(std::move(errmsg));
-    } else {
-      Log(InfoLogLevel::INFO_LEVEL, cfs_->GetLogger(),
-          "[gcs] GetObject %s/%s error %s.", bucket_name.c_str(),
-          object_path.c_str(), errmsg.c_str());
+  auto& dl_limiter = cfs_->GetCloudFileSystemOptions().cloud_download_rate_limiter;
+
+  if (dl_limiter) {
+    CloudRequestCallbackGuard guard(
+        gcs_client_->GetRequestCallback(), CloudRequestOpType::kReadOp);
+    gcs::ObjectReadStream os =
+        gcs_client_->GetClient()->ReadObject(bucket_name, normalized_path);
+    if (os.bad()) {
+      guard.SetSuccess(false);
+      std::string errmsg = os.status().message();
+      if (IsNotFound(os.status())) {
+        return IOStatus::NotFound(std::move(errmsg));
+      }
       return IOStatus::IOError(std::move(errmsg));
+    }
+
+    std::ofstream ofs(destination, std::ofstream::binary);
+    if (!ofs.is_open()) {
+      guard.SetSuccess(false);
+      return IOStatus::IOError("Unable to open dest file " + destination);
+    }
+
+    constexpr size_t kChunkSize = 256 * 1024;
+    char buf[kChunkSize];
+    uint64_t total = 0;
+    while (os.read(buf, kChunkSize) || os.gcount() > 0) {
+      auto got = static_cast<size_t>(os.gcount());
+      dl_limiter->Request(static_cast<int64_t>(got), Env::IOPriority::IO_LOW,
+                          nullptr, RateLimiter::OpType::kRead);
+      ofs.write(buf, static_cast<std::streamsize>(got));
+      total += got;
+      if (os.eof()) break;
+    }
+    ofs.close();
+    *remote_size = total;
+    guard.SetSize(total);
+    guard.SetSuccess(true);
+  } else {
+    auto get = gcs_client_->DownloadFile(bucket_name, normalized_path,
+                                         destination, remote_size);
+    if (!get.ok()) {
+      std::string errmsg = get.message();
+      if (IsNotFound(get)) {
+        Log(InfoLogLevel::ERROR_LEVEL, cfs_->GetLogger(),
+            "[gcs] GetObject %s/%s error %s.", bucket_name.c_str(),
+            object_path.c_str(), errmsg.c_str());
+        return IOStatus::NotFound(std::move(errmsg));
+      } else {
+        Log(InfoLogLevel::INFO_LEVEL, cfs_->GetLogger(),
+            "[gcs] GetObject %s/%s error %s.", bucket_name.c_str(),
+            object_path.c_str(), errmsg.c_str());
+        return IOStatus::IOError(std::move(errmsg));
+      }
     }
   }
   return IOStatus::OK();
@@ -636,14 +693,56 @@ IOStatus GcsStorageProvider::DoPutCloudObject(
     const std::string& object_path, uint64_t file_size,
     const PutObjectOptions& /*options*/) {
   auto normalized_path = normalize_object_path(object_path);
-  auto put = gcs_client_->UploadFile(bucket_name, normalized_path, local_file);
-  if (!put.ok()) {
-    const auto& error = put.status().message();
-    std::string errmsg(error.data(), error.size());
-    Log(InfoLogLevel::ERROR_LEVEL, cfs_->GetLogger(),
-        "[gcs] PutCloudObject %s/%s, size %" PRIu64 ", ERROR %s",
-        bucket_name.c_str(), object_path.c_str(), file_size, errmsg.c_str());
-    return IOStatus::IOError(local_file, errmsg);
+  auto& ul_limiter = cfs_->GetCloudFileSystemOptions().cloud_upload_rate_limiter;
+
+  if (ul_limiter) {
+    CloudRequestCallbackGuard guard(
+        gcs_client_->GetRequestCallback(), CloudRequestOpType::kWriteOp,
+        file_size);
+    std::ifstream ifs(local_file, std::ifstream::binary);
+    if (!ifs.is_open()) {
+      guard.SetSuccess(false);
+      return IOStatus::IOError("Unable to open local file " + local_file);
+    }
+
+    gcs::ObjectWriteStream ws =
+        gcs_client_->GetClient()->WriteObject(bucket_name, normalized_path);
+
+    constexpr size_t kChunkSize = 256 * 1024;
+    char buf[kChunkSize];
+    while (ifs.read(buf, kChunkSize) || ifs.gcount() > 0) {
+      auto got = static_cast<size_t>(ifs.gcount());
+      ul_limiter->Request(static_cast<int64_t>(got), Env::IOPriority::IO_LOW,
+                          nullptr, RateLimiter::OpType::kWrite);
+      ws.write(buf, static_cast<std::streamsize>(got));
+      if (!ws.good()) {
+        guard.SetSuccess(false);
+        return IOStatus::IOError(local_file, "GCS write stream error");
+      }
+      if (ifs.eof()) break;
+    }
+    ws.Close();
+    auto result = ws.metadata();
+    if (!result.ok()) {
+      guard.SetSuccess(false);
+      std::string errmsg(result.status().message());
+      Log(InfoLogLevel::ERROR_LEVEL, cfs_->GetLogger(),
+          "[gcs] PutCloudObject %s/%s, size %" PRIu64 ", ERROR %s",
+          bucket_name.c_str(), object_path.c_str(), file_size, errmsg.c_str());
+      return IOStatus::IOError(local_file, errmsg);
+    }
+    guard.SetSuccess(true);
+  } else {
+    auto put =
+        gcs_client_->UploadFile(bucket_name, normalized_path, local_file);
+    if (!put.ok()) {
+      const auto& error = put.status().message();
+      std::string errmsg(error.data(), error.size());
+      Log(InfoLogLevel::ERROR_LEVEL, cfs_->GetLogger(),
+          "[gcs] PutCloudObject %s/%s, size %" PRIu64 ", ERROR %s",
+          bucket_name.c_str(), object_path.c_str(), file_size, errmsg.c_str());
+      return IOStatus::IOError(local_file, errmsg);
+    }
   }
 
   Log(InfoLogLevel::INFO_LEVEL, cfs_->GetLogger(),

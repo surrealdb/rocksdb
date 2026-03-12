@@ -4096,6 +4096,18 @@ extern ROCKSDB_LIBRARY_API uint64_t
 rocksdb_cloud_fs_options_get_background_wal_sync_interval_ms(
     rocksdb_cloud_fs_options_t* opts);
 
+/* Cloud bandwidth throttling */
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_cloud_upload_rate_limiter(
+    rocksdb_cloud_fs_options_t* opts, int64_t rate_bytes_per_sec,
+    int64_t refill_period_us, int32_t fairness);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_cloud_download_rate_limiter(
+    rocksdb_cloud_fs_options_t* opts, int64_t rate_bytes_per_sec,
+    int64_t refill_period_us, int32_t fairness);
+
 /* Cloud fallback bucket options */
 
 extern ROCKSDB_LIBRARY_API void

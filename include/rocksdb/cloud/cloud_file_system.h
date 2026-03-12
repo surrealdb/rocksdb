@@ -13,6 +13,7 @@
 #include "rocksdb/configurable.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/io_status.h"
+#include "rocksdb/rate_limiter.h"
 #include "rocksdb/status.h"
 
 namespace Aws {
@@ -436,6 +437,16 @@ class CloudFileSystemOptions {
   // background_wal_sync_to_cloud is true.
   // Default: 5000 (5 seconds)
   uint64_t background_wal_sync_interval_ms = 5000;
+
+  // Rate limiter for cloud upload operations (SST, MANIFEST, WAL, IDENTITY).
+  // nullptr means no throttling. Use NewGenericRateLimiter() to create.
+  // Default: nullptr (unlimited)
+  std::shared_ptr<RateLimiter> cloud_upload_rate_limiter;
+
+  // Rate limiter for cloud download operations (SST, MANIFEST, range reads).
+  // nullptr means no throttling. Use NewGenericRateLimiter() to create.
+  // Default: nullptr (unlimited)
+  std::shared_ptr<RateLimiter> cloud_download_rate_limiter;
 
   // Type info map for this class.
   static const std::unordered_map<std::string, OptionTypeInfo>
