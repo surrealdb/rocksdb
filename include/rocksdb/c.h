@@ -4225,6 +4225,10 @@ extern ROCKSDB_LIBRARY_API void rocksdb_cloud_db_checkpoint_to_cloud(
     rocksdb_cloud_db_t* db, rocksdb_cloud_bucket_options_t* destination,
     rocksdb_cloud_checkpoint_options_t* options, char** errptr);
 
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_db_capture_fork_point(
+    rocksdb_cloud_db_t* db, char** epoch_out, uint64_t* file_number_out,
+    char** cookie_out, char** errptr);
+
 extern ROCKSDB_LIBRARY_API char** rocksdb_cloud_db_list_column_families(
     const rocksdb_options_t* options, const char* name, size_t* lencf,
     char** errptr);
@@ -4252,6 +4256,10 @@ extern ROCKSDB_LIBRARY_API void rocksdb_cloud_otxn_db_close(
 extern ROCKSDB_LIBRARY_API rocksdb_optimistictransactiondb_t*
 rocksdb_cloud_otxn_db_get_txn_db(rocksdb_cloud_otxn_db_t* otxn_db);
 
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_otxn_db_capture_fork_point(
+    rocksdb_cloud_otxn_db_t* otxn_db, char** epoch_out,
+    uint64_t* file_number_out, char** cookie_out, char** errptr);
+
 /* CloudTransactionDB */
 
 extern ROCKSDB_LIBRARY_API rocksdb_cloud_txn_db_t*
@@ -4276,6 +4284,10 @@ extern ROCKSDB_LIBRARY_API void rocksdb_cloud_txn_db_close(
 
 extern ROCKSDB_LIBRARY_API rocksdb_transactiondb_t*
 rocksdb_cloud_txn_db_get_txn_db(rocksdb_cloud_txn_db_t* txn_db);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_txn_db_capture_fork_point(
+    rocksdb_cloud_txn_db_t* txn_db, char** epoch_out,
+    uint64_t* file_number_out, char** cookie_out, char** errptr);
 
 #endif /* ROCKSDB_CLOUD */
 

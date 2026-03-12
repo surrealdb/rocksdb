@@ -30,6 +30,8 @@ class CloudOptimisticTransactionDBImpl
   Status CheckpointToCloud(const BucketOptions& destination,
                            const CheckpointToCloudOptions& options) override;
 
+  Status CaptureForkPoint(ForkPoint* result) override;
+
  private:
   DBCloudImpl* db_cloud_;
   OptimisticTransactionDBImpl* txn_db_;

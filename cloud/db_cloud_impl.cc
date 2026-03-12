@@ -312,6 +312,34 @@ Status DBCloudImpl::Savepoint() {
   return st;
 }
 
+Status DBCloudImpl::CaptureForkPoint(ForkPoint* result) {
+  auto* cfs =
+      static_cast<CloudFileSystemImpl*>(GetEnv()->GetFileSystem().get());
+  assert(cfs);
+
+  DisableFileDeletions();
+
+  uint64_t max_file_number = 0;
+  auto st = cfs->GetMaxFileNumberFromCurrentManifest(GetName(),
+                                                     &max_file_number);
+  if (st.ok()) {
+    result->epoch = cfs->GetCloudManifest()->GetCurrentEpoch();
+    result->file_number = max_file_number;
+    auto& opts = cfs->GetCloudFileSystemOptions();
+    result->cloud_manifest_cookie = opts.new_cookie_on_open.empty()
+                                        ? opts.cookie_on_open
+                                        : opts.new_cookie_on_open;
+  }
+
+  EnableFileDeletions();
+
+  Log(InfoLogLevel::INFO_LEVEL, GetOptions().info_log,
+      "CaptureForkPoint epoch %s file_number %" PRIu64 " cookie %s: %s",
+      result->epoch.c_str(), result->file_number,
+      result->cloud_manifest_cookie.c_str(), st.ToString().c_str());
+  return st;
+}
+
 Status DBCloudImpl::CheckpointToCloud(const BucketOptions& destination,
                                       const CheckpointToCloudOptions& options) {
   DisableFileDeletions();

@@ -38,6 +38,10 @@ Status CloudOptimisticTransactionDBImpl::CheckpointToCloud(
   return db_cloud_->CheckpointToCloud(destination, options);
 }
 
+Status CloudOptimisticTransactionDBImpl::CaptureForkPoint(ForkPoint* result) {
+  return db_cloud_->CaptureForkPoint(result);
+}
+
 Status CloudOptimisticTransactionDB::Open(
     const Options& options, const std::string& name,
     const std::string& persistent_cache_path,

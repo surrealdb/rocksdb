@@ -11,6 +11,14 @@
 
 namespace ROCKSDB_NAMESPACE {
 
+// Captures the exact position in the CloudManifest where a branch diverges.
+// This is a metadata-only snapshot — no SSTs are copied.
+struct ForkPoint {
+  std::string epoch;
+  uint64_t file_number;
+  std::string cloud_manifest_cookie;
+};
+
 //
 // Database with Cloud support.
 //
@@ -54,6 +62,12 @@ class DBCloud : public StackableDB {
   // This feature should be considered experimental.
   virtual Status CheckpointToCloud(const BucketOptions& destination,
                                    const CheckpointToCloudOptions& options) = 0;
+
+  // Capture a lightweight fork point: the current epoch, next file number,
+  // and CLOUDMANIFEST cookie. The cloud API can store this externally and
+  // use it to create a zero-copy branch that shares the parent's SSTs
+  // for file numbers below the fork point.
+  virtual Status CaptureForkPoint(ForkPoint* result) = 0;
 
   // ListColumnFamilies will open the DB specified by argument name
   // and return the list of all column families in that DB
