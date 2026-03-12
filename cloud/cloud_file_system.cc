@@ -96,6 +96,14 @@ void CloudFileSystemOptions::Dump(Logger* log) const {
          background_wal_sync_to_cloud);
   Header(log, "  COptions.background_wal_sync_interval_ms: %" PRIu64,
          background_wal_sync_interval_ms);
+  Header(log, "    COptions.cloud_upload_rate_limiter: %" PRIi64 " B/s",
+         cloud_upload_rate_limiter
+             ? cloud_upload_rate_limiter->GetBytesPerSecond()
+             : 0);
+  Header(log, "  COptions.cloud_download_rate_limiter: %" PRIi64 " B/s",
+         cloud_download_rate_limiter
+             ? cloud_download_rate_limiter->GetBytesPerSecond()
+             : 0);
   Header(log, "             COptions.fallback_buckets count: %zu",
          fallback_buckets.size());
   for (size_t i = 0; i < fallback_buckets.size(); ++i) {

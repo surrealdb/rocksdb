@@ -44,6 +44,7 @@
 #include "cloud/aws/aws_file.h"
 #include "cloud/aws/aws_file_system.h"
 #include "cloud/filename.h"
+#include "cloud/rate_limited_stream.h"
 #include "file/read_write_util.h"
 #include "file/writable_file_writer.h"
 #include "port/port.h"
@@ -287,11 +288,19 @@ class S3ReadableFile : public CloudStorageReadableFileImpl {
     return max_size;
   }
 
-  // random access, read data from specified offset in file
+  void SetDownloadRateLimiter(RateLimiter* limiter) {
+    download_rate_limiter_ = limiter;
+  }
+
   IOStatus DoCloudRead(uint64_t offset, size_t n, const IOOptions& /*options*/,
                        char* scratch, uint64_t* bytes_read,
                        IODebugContext* /*dbg*/) const override {
-    // create a range read request
+    if (download_rate_limiter_ && n > 0) {
+      download_rate_limiter_->Request(
+          static_cast<int64_t>(n), Env::IOPriority::IO_LOW,
+          nullptr /* stats */, RateLimiter::OpType::kRead);
+    }
+
     // Ranges are inclusive, so we can't read 0 bytes; read 1 instead and
     // drop it later.
     size_t rangeLen = (n != 0 ? n : 1);
@@ -353,6 +362,7 @@ class S3ReadableFile : public CloudStorageReadableFileImpl {
  private:
   std::shared_ptr<AwsS3ClientWrapper> s3client_;
   std::string content_hash_;
+  RateLimiter* download_rate_limiter_ = nullptr;
 };  // End class S3ReadableFile
 
 /******************** Writablefile ******************/
@@ -744,8 +754,13 @@ IOStatus S3StorageProvider::DoNewCloudReadableFile(
     const std::string& content_hash, const FileOptions& /*options*/,
     std::unique_ptr<CloudStorageReadableFile>* result,
     IODebugContext* /*dbg*/) {
-  result->reset(new S3ReadableFile(s3client_, cfs_->GetLogger(), bucket, fname,
-                                   fsize, content_hash));
+  auto* file = new S3ReadableFile(s3client_, cfs_->GetLogger(), bucket, fname,
+                                  fsize, content_hash);
+  auto& dl_limiter = cfs_->GetCloudFileSystemOptions().cloud_download_rate_limiter;
+  if (dl_limiter) {
+    file->SetDownloadRateLimiter(dl_limiter.get());
+  }
+  result->reset(file);
   return IOStatus::OK();
 }
 
@@ -913,17 +928,14 @@ IOStatus S3StorageProvider::DoGetCloudObject(const std::string& bucket_name,
                                              const std::string& object_path,
                                              const std::string& destination,
                                              uint64_t* remote_size) {
-  if (s3client_->HasTransferManager()) {
-    // AWS Transfer manager does not work if we provide our stream
-    // implementation because of https://github.com/aws/aws-sdk-cpp/issues/1732.
-    // The stream is not flushed when WaitUntilFinished() returns.
-    // TODO(igor) Fix this once the AWS SDK's bug is fixed.
+  auto& dl_limiter = cfs_->GetCloudFileSystemOptions().cloud_download_rate_limiter;
+  bool use_tm = s3client_->HasTransferManager() && !dl_limiter;
+
+  if (use_tm) {
     auto ioStreamFactory = [=]() -> Aws::IOStream* {
-        // fallback to FStream
         return Aws::New<Aws::FStream>(
             Aws::Utils::ARRAY_ALLOCATION_TAG, destination,
             std::ios_base::out | std::ios_base::trunc);
-
     };
 
     auto handle = s3client_->DownloadFile(ToAwsString(bucket_name),
@@ -947,10 +959,8 @@ IOStatus S3StorageProvider::DoGetCloudObject(const std::string& bucket_name,
   } else {
     IOStatus fileCloseStatus;
     {
-      // Close() will be called in the destructor of the object returned by
-      // this factory. Adding an inner scope so that the destructor is called
-      // before checking fileCloseStatus.
-      auto ioStreamFactory = [this, destination, &fileCloseStatus]() -> Aws::IOStream* {
+      auto ioStreamFactory = [this, destination, &fileCloseStatus,
+                              &dl_limiter]() -> Aws::IOStream* {
         FileOptions foptions;
         foptions.use_direct_writes =
             cfs_->GetCloudFileSystemOptions().use_direct_io_for_cloud_download;
@@ -958,17 +968,22 @@ IOStatus S3StorageProvider::DoGetCloudObject(const std::string& bucket_name,
         auto st = NewWritableFile(cfs_->GetBaseFileSystem().get(), destination,
                                   &file, foptions);
         if (!st.ok()) {
-          // fallback to FStream
           return Aws::New<Aws::FStream>(
               Aws::Utils::ARRAY_ALLOCATION_TAG, destination,
               std::ios_base::out | std::ios_base::trunc);
         }
-        return Aws::New<IOStreamWithOwnedBuf<WritableFileStreamBuf>>(
+        auto* stream = Aws::New<IOStreamWithOwnedBuf<WritableFileStreamBuf>>(
             Aws::Utils::ARRAY_ALLOCATION_TAG,
             std::unique_ptr<WritableFileStreamBuf>(new WritableFileStreamBuf(
                 &fileCloseStatus,
                 std::unique_ptr<WritableFileWriter>(new WritableFileWriter(
                         std::move(file), destination, foptions)))));
+        if (dl_limiter && stream) {
+          auto* rl_buf = new RateLimitedWriteStreamBuf(
+              stream->rdbuf(), dl_limiter.get());
+          stream->rdbuf(rl_buf);
+        }
+        return stream;
       };
 
       Aws::S3::Model::GetObjectRequest request;
@@ -1012,7 +1027,10 @@ IOStatus S3StorageProvider::DoPutCloudObject(const std::string& local_file,
                                              const std::string& object_path,
                                              uint64_t file_size,
                                              const PutObjectOptions& options) {
-  if (s3client_->HasTransferManager()) {
+  auto& ul_limiter = cfs_->GetCloudFileSystemOptions().cloud_upload_rate_limiter;
+  bool use_tm = s3client_->HasTransferManager() && !ul_limiter;
+
+  if (use_tm) {
     auto handle = s3client_->UploadFile(ToAwsString(bucket_name),
                                         ToAwsString(object_path),
                                         ToAwsString(local_file), file_size);
@@ -1028,6 +1046,13 @@ IOStatus S3StorageProvider::DoPutCloudObject(const std::string& local_file,
     auto inputData =
         Aws::MakeShared<Aws::FStream>(object_path.c_str(), local_file.c_str(),
                                       std::ios_base::in | std::ios_base::out);
+
+    std::unique_ptr<RateLimitedReadStreamBuf> rl_buf;
+    if (ul_limiter) {
+      rl_buf = std::make_unique<RateLimitedReadStreamBuf>(
+          inputData->rdbuf(), ul_limiter.get());
+      inputData->rdbuf(rl_buf.get());
+    }
 
     Aws::S3::Model::PutObjectRequest putRequest;
     putRequest.SetBucket(ToAwsString(bucket_name));
