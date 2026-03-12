@@ -45,6 +45,7 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   copts.constant_sst_file_size_in_sst_file_manager = 100;
   copts.run_purger = false;
   copts.purger_periodicity_millis = 101;
+  copts.local_sst_cache_size = 0;
 
   std::string str;
   ASSERT_OK(copts.Serialize(config_options, &str));
@@ -58,6 +59,7 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   ASSERT_FALSE(copy.run_purger);
   ASSERT_EQ(copy.constant_sst_file_size_in_sst_file_manager, 100);
   ASSERT_EQ(copy.purger_periodicity_millis, 101);
+  ASSERT_EQ(copy.local_sst_cache_size, 0);
 
   // Now try a different value
   copts.keep_local_sst_files = true;
@@ -69,6 +71,7 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   copts.constant_sst_file_size_in_sst_file_manager = 200;
   copts.run_purger = true;
   copts.purger_periodicity_millis = 201;
+  copts.local_sst_cache_size = 10737418240ULL;
 
   ASSERT_OK(copts.Serialize(config_options, &str));
   ASSERT_OK(copy.Configure(config_options, str));
@@ -81,6 +84,7 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   ASSERT_TRUE(copy.run_purger);
   ASSERT_EQ(copy.constant_sst_file_size_in_sst_file_manager, 200);
   ASSERT_EQ(copy.purger_periodicity_millis, 201);
+  ASSERT_EQ(copy.local_sst_cache_size, 10737418240ULL);
 }
 
 TEST(CloudFileSystemTest, ConfigureBucketOptions) {

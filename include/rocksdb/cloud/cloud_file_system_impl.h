@@ -17,6 +17,8 @@ namespace ROCKSDB_NAMESPACE {
 class CloudManifest;
 class CloudScheduler;
 class CloudStorageReadableFile;
+class CloudWALController;
+class LocalSstCache;
 class ObjectLibrary;
 class CloudFileDeletionScheduler;
 
@@ -213,13 +215,7 @@ class CloudFileSystemImpl : public CloudFileSystem {
   }
   FileOptions OptimizeForLogWrite(const FileOptions& file_options,
                                   const DBOptions& db_options) const override {
-    auto fo = base_fs_->OptimizeForLogWrite(file_options, db_options);
-    if (!fo.use_direct_writes) {
-      // RocksDB-Cloud doesn't use WALs, so don't waste memory on allocating
-      // their buffers.
-      fo.writable_file_max_buffer_size = 0;
-    }
-    return fo;
+    return base_fs_->OptimizeForLogWrite(file_options, db_options);
   }
   FileOptions OptimizeForManifestWrite(
       const FileOptions& file_options) const override {
@@ -427,6 +423,9 @@ class CloudFileSystemImpl : public CloudFileSystem {
     info_log_ = std::move(l);
   }
 
+  void OnLocalSstFileCreated(const std::string& fname,
+                             uint64_t size) override;
+
  private:
   // Files are invisibile if:
   // - It's CLOUDMANFIEST file and cookie is not active. NOTE: empty cookie is
@@ -466,6 +465,8 @@ class CloudFileSystemImpl : public CloudFileSystem {
   // scratch space in local dir
   static constexpr const char* SCRATCH_LOCAL_DIR = "/tmp";
   std::shared_ptr<CloudFileDeletionScheduler> cloud_file_deletion_scheduler_;
+  std::unique_ptr<LocalSstCache> local_sst_cache_;
+  std::unique_ptr<CloudWALController> wal_controller_;
 };
 
 }  // namespace ROCKSDB_NAMESPACE

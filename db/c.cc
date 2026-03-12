@@ -9110,6 +9110,16 @@ uint64_t rocksdb_cloud_fs_options_get_purger_periodicity_millis(
   return opts->rep.purger_periodicity_millis;
 }
 
+void rocksdb_cloud_fs_options_set_local_sst_cache_size(
+    rocksdb_cloud_fs_options_t* opts, uint64_t val) {
+  opts->rep.local_sst_cache_size = val;
+}
+
+uint64_t rocksdb_cloud_fs_options_get_local_sst_cache_size(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.local_sst_cache_size;
+}
+
 void rocksdb_cloud_fs_options_set_request_timeout_ms(
     rocksdb_cloud_fs_options_t* opts, uint64_t val) {
   opts->rep.request_timeout_ms = val;
@@ -9181,6 +9191,68 @@ void rocksdb_cloud_fs_options_set_new_cookie_on_open(
 const char* rocksdb_cloud_fs_options_get_new_cookie_on_open(
     rocksdb_cloud_fs_options_t* opts) {
   return opts->rep.new_cookie_on_open.c_str();
+}
+
+// Cloud WAL options
+
+void rocksdb_cloud_fs_options_set_keep_local_log_files(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.keep_local_log_files = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_keep_local_log_files(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.keep_local_log_files;
+}
+
+void rocksdb_cloud_fs_options_set_kafka_wal_sync_mode(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.kafka_wal_sync_mode = static_cast<ROCKSDB_NAMESPACE::WalKafkaSyncMode>(val);
+}
+
+unsigned char rocksdb_cloud_fs_options_get_kafka_wal_sync_mode(
+    rocksdb_cloud_fs_options_t* opts) {
+  return static_cast<unsigned char>(opts->rep.kafka_wal_sync_mode);
+}
+
+void rocksdb_cloud_fs_options_set_kafka_bootstrap_servers(
+    rocksdb_cloud_fs_options_t* opts, const char* val) {
+  opts->rep.kafka_bootstrap_servers = std::string(val);
+}
+
+const char* rocksdb_cloud_fs_options_get_kafka_bootstrap_servers(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.kafka_bootstrap_servers.c_str();
+}
+
+void rocksdb_cloud_fs_options_set_kafka_topic_prefix(
+    rocksdb_cloud_fs_options_t* opts, const char* val) {
+  opts->rep.kafka_topic_prefix = std::string(val);
+}
+
+const char* rocksdb_cloud_fs_options_get_kafka_topic_prefix(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.kafka_topic_prefix.c_str();
+}
+
+void rocksdb_cloud_fs_options_set_background_wal_sync_to_cloud(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.background_wal_sync_to_cloud = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_background_wal_sync_to_cloud(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.background_wal_sync_to_cloud;
+}
+
+void rocksdb_cloud_fs_options_set_background_wal_sync_interval_ms(
+    rocksdb_cloud_fs_options_t* opts, uint64_t val) {
+  opts->rep.background_wal_sync_interval_ms = val;
+}
+
+uint64_t rocksdb_cloud_fs_options_get_background_wal_sync_interval_ms(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.background_wal_sync_interval_ms;
 }
 
 // CloudBucketOptions

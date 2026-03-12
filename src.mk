@@ -356,11 +356,13 @@ CLOUD_SOURCES =                                                 \
   cloud/cloud_manifest.cc                                       \
   cloud/cloud_scheduler.cc                                      \
   cloud/cloud_file_deletion_scheduler.cc                        \
+  cloud/cloud_wal_controller.cc                                 \
   cloud/db_cloud_impl.cc                                        \
   cloud/cloud_optimistic_transaction_db_impl.cc                 \
   cloud/cloud_transaction_db_impl.cc                            \
   cloud/manifest_reader.cc                                      \
   cloud/purge.cc                                                \
+  cloud/local_sst_cache.cc                                      \
   db/db_impl/replication_codec.cc                               \
   db/replication_epoch_edit.cc                                   \
   cloud/aws/aws_file_system.cc                                  \
@@ -370,6 +372,10 @@ CLOUD_SOURCES =                                                 \
   cloud/gcp/gcp_file_system.cc                                  \
   cloud/gcp/gcp_retry.cc                                        \
 
+ifdef USE_KAFKA
+CLOUD_SOURCES += cloud/kafka_wal.cc
+endif
+
 CLOUD_TEST_SOURCES =                                            \
   cloud/db_cloud_test.cc                                        \
   cloud/cloud_file_system_test.cc                               \
@@ -377,6 +383,7 @@ CLOUD_TEST_SOURCES =                                            \
   cloud/cloud_optimistic_transaction_db_test.cc                 \
   cloud/cloud_transaction_db_test.cc                            \
   cloud/cloud_scheduler_test.cc                                 \
+  cloud/local_sst_cache_test.cc                                 \
   cloud/replication_test.cc                                      \
 
 WITH_FAISS_LIB_SOURCES = \

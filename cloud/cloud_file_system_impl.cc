@@ -8,7 +8,9 @@
 
 #include "cloud/cloud_manifest.h"
 #include "cloud/cloud_scheduler.h"
+#include "cloud/cloud_wal_controller.h"
 #include "cloud/filename.h"
+#include "cloud/local_sst_cache.h"
 #include "cloud/manifest_reader.h"
 #include "file/file_util.h"
 #include "file/filename.h"
@@ -40,11 +42,27 @@ CloudFileSystemImpl::CloudFileSystemImpl(
     cloud_file_deletion_scheduler_ = CloudFileDeletionScheduler::Create(
         CloudScheduler::Get(), *opts.cloud_file_deletion_delay);
   }
+  if (cloud_fs_options.local_sst_cache_size > 0) {
+    cloud_fs_options.keep_local_sst_files = true;
+    local_sst_cache_ = std::make_unique<LocalSstCache>(
+        cloud_fs_options.local_sst_cache_size, base_fs_, info_log_);
+  }
 }
 
 CloudFileSystemImpl::~CloudFileSystemImpl() {
+  if (wal_controller_) {
+    wal_controller_->Stop();
+    wal_controller_.reset();
+  }
   StopPurger();
   cloud_fs_options.storage_provider.reset();
+}
+
+void CloudFileSystemImpl::OnLocalSstFileCreated(const std::string& fname,
+                                                uint64_t size) {
+  if (local_sst_cache_) {
+    local_sst_cache_->Add(fname, size);
+  }
 }
 
 IOStatus CloudFileSystemImpl::ExistsCloudObject(const std::string& fname) {
@@ -169,12 +187,19 @@ IOStatus CloudFileSystemImpl::NewSequentialFile(
     if (cloud_fs_options.keep_local_sst_files || !sstfile) {
       // We read first from local storage and then from cloud storage.
       st = base_fs_->NewSequentialFile(fname, file_opts, result, dbg);
-      if (!st.ok()) {
-        // copy the file to the local storage if keep_local_sst_files is true
+      if (st.ok()) {
+        if (local_sst_cache_ && sstfile) {
+          local_sst_cache_->Touch(fname);
+        }
+      } else {
         st = GetCloudObject(fname);
         if (st.ok()) {
-          // we successfully copied the file, try opening it locally now
           st = base_fs_->NewSequentialFile(fname, file_opts, result, dbg);
+          if (st.ok() && local_sst_cache_ && sstfile) {
+            uint64_t fsize = 0;
+            base_fs_->GetFileSize(fname, IOOptions(), &fsize, nullptr);
+            local_sst_cache_->Add(fname, fsize);
+          }
         }
       }
     } else {
@@ -233,6 +258,7 @@ IOStatus CloudFileSystemImpl::NewRandomAccessFile(
   const IOOptions io_opts;
   if (sstfile || blobfile || manifest || identity) {
     if (cloud_fs_options.keep_local_sst_files || (!sstfile && !blobfile)) {
+      bool downloaded_from_cloud = false;
       // Read from local storage and then from cloud storage.
       st = base_fs_->NewRandomAccessFile(fname, file_opts, result, dbg);
 
@@ -242,11 +268,20 @@ IOStatus CloudFileSystemImpl::NewRandomAccessFile(
       }
 
       if (!st.ok()) {
-        // copy the file to the local storage
         st = GetCloudObject(fname);
         if (st.ok()) {
-          // we successfully copied the file, try opening it locally now
           st = base_fs_->NewRandomAccessFile(fname, file_opts, result, dbg);
+          downloaded_from_cloud = st.ok();
+        }
+      }
+
+      if (st.ok() && local_sst_cache_ && (sstfile || blobfile)) {
+        if (downloaded_from_cloud) {
+          uint64_t fsize = 0;
+          base_fs_->GetFileSize(fname, io_opts, &fsize, dbg);
+          local_sst_cache_->Add(fname, fsize);
+        } else {
+          local_sst_cache_->Touch(fname);
         }
       }
       // If we are being paranoic, then we validate that our file size is
@@ -327,6 +362,8 @@ IOStatus CloudFileSystemImpl::NewWritableFile(
       return s;
     }
     result->reset(f.release());
+  } else if (logfile && wal_controller_ && wal_controller_->IsActive()) {
+    s = wal_controller_->NewWritableFile(fname, file_opts, result, dbg);
   } else {
     s = base_fs_->NewWritableFile(fname, file_opts, result, dbg);
   }
@@ -703,11 +740,13 @@ IOStatus CloudFileSystemImpl::DeleteFile(const std::string& logical_fname,
   // Delete from destination bucket and local dir
   if (sstfile || blobfile || manifest || identity) {
     if (HasDestBucket()) {
-      // add the remote file deletion to the queue
       st = DeleteCloudFileFromDest(basename(fname));
     }
-    // delete from local, too. Ignore the result, though. The file might not be
-    // there locally.
+    if (local_sst_cache_ && (sstfile || blobfile)) {
+      local_sst_cache_->Remove(fname);
+    }
+    // Delete from local too. Ignore the result -- the file might not be
+    // there locally (e.g. it was already evicted by the cache).
     base_fs_->DeleteFile(fname, io_opts, dbg);
   } else {
     st = base_fs_->DeleteFile(fname, io_opts, dbg);
@@ -1609,6 +1648,9 @@ IOStatus CloudFileSystemImpl::SanitizeLocalDirectory(
     Log(InfoLogLevel::INFO_LEVEL, info_log_,
         "[cloud_fs_impl] SanitizeDirectory local directory %s is good",
         local_name.c_str());
+    if (local_sst_cache_) {
+      local_sst_cache_->SeedFromDirectory(local_name);
+    }
     return IOStatus::OK();
   }
   Log(InfoLogLevel::INFO_LEVEL, info_log_,
@@ -1727,6 +1769,21 @@ IOStatus CloudFileSystemImpl::SanitizeLocalDirectory(
     if (!st.ok()) {
       return st;
     }
+  }
+
+  if (local_sst_cache_) {
+    local_sst_cache_->SeedFromDirectory(local_name);
+  }
+
+  // Recover WAL files from cloud if background WAL sync was enabled
+  if (wal_controller_) {
+    auto wal_st = wal_controller_->RecoverWALFromCloud(local_name);
+    if (!wal_st.ok()) {
+      Log(InfoLogLevel::WARN_LEVEL, info_log_,
+          "[cloud_fs_impl] WAL recovery from cloud failed: %s",
+          wal_st.ToString().c_str());
+    }
+    wal_controller_->StartBackgroundUploader(local_name);
   }
 
   return IOStatus::OK();
@@ -2155,6 +2212,15 @@ Status CloudFileSystemImpl::PrepareOptions(const ConfigOptions& options) {
   if (!status.ok()) {
     return status;
   }
+
+  // Initialize WAL controller if any WAL cloud option is set
+  if (cloud_fs_options.kafka_wal_sync_mode != WalKafkaSyncMode::kNone ||
+      cloud_fs_options.background_wal_sync_to_cloud ||
+      !cloud_fs_options.keep_local_log_files) {
+    wal_controller_ = std::make_unique<CloudWALController>(
+        this, base_fs_, cloud_fs_options, info_log_);
+  }
+
   // start the purge thread only if there is a destination bucket
   if (cloud_fs_options.dest_bucket.IsValid() && cloud_fs_options.run_purger) {
     CloudFileSystemImpl* cloud = this;
@@ -2188,9 +2254,39 @@ Status CloudFileSystemImpl::CheckValidity() const {
   } else if (!cloud_fs_options.storage_provider) {
     return Status::InvalidArgument(
         "Cloud environment requires a storage provider");
-  } else {
-    return Status::OK();
   }
+
+  if (cloud_fs_options.kafka_wal_sync_mode != WalKafkaSyncMode::kNone) {
+#ifndef USE_KAFKA
+    return Status::NotSupported(
+        "Kafka WAL sync requires building with USE_KAFKA");
+#endif
+    if (cloud_fs_options.kafka_bootstrap_servers.empty()) {
+      return Status::InvalidArgument(
+          "kafka_bootstrap_servers must be set when kafka_wal_sync_mode is "
+          "enabled");
+    }
+    if (!cloud_fs_options.dest_bucket.IsValid()) {
+      return Status::InvalidArgument(
+          "dest_bucket must be valid when kafka_wal_sync_mode is enabled");
+    }
+  }
+
+  if (cloud_fs_options.background_wal_sync_to_cloud &&
+      !cloud_fs_options.keep_local_log_files) {
+    return Status::InvalidArgument(
+        "background_wal_sync_to_cloud requires keep_local_log_files=true");
+  }
+
+  if (!cloud_fs_options.keep_local_log_files &&
+      cloud_fs_options.kafka_wal_sync_mode == WalKafkaSyncMode::kNone &&
+      !cloud_fs_options.background_wal_sync_to_cloud) {
+    return Status::InvalidArgument(
+        "keep_local_log_files=false requires either Kafka or background "
+        "cloud WAL sync to be enabled");
+  }
+
+  return Status::OK();
 }
 
 void CloudFileSystemImpl::RemapFileNumbers(
