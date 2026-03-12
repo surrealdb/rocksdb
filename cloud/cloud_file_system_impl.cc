@@ -75,6 +75,11 @@ IOStatus CloudFileSystemImpl::ExistsCloudObject(const std::string& fname) {
     st = GetStorageProvider()->ExistsCloudObject(GetSrcBucketName(),
                                                  srcname(fname));
   }
+  for (const auto& fb : cloud_fs_options.fallback_buckets) {
+    if (!st.IsNotFound()) break;
+    st = GetStorageProvider()->ExistsCloudObject(fb.GetBucketName(),
+                                                 fallbackname(fb, fname));
+  }
   return st;
 }
 
@@ -87,6 +92,11 @@ IOStatus CloudFileSystemImpl::GetCloudObject(const std::string& fname) {
   if (st.IsNotFound() && HasSrcBucket() && !SrcMatchesDest()) {
     st = GetStorageProvider()->GetCloudObject(GetSrcBucketName(),
                                               srcname(fname), fname);
+  }
+  for (const auto& fb : cloud_fs_options.fallback_buckets) {
+    if (!st.IsNotFound()) break;
+    st = GetStorageProvider()->GetCloudObject(fb.GetBucketName(),
+                                              fallbackname(fb, fname), fname);
   }
   return st;
 }
@@ -102,6 +112,11 @@ IOStatus CloudFileSystemImpl::GetCloudObjectSize(const std::string& fname,
     st = GetStorageProvider()->GetCloudObjectSize(GetSrcBucketName(),
                                                   srcname(fname), remote_size);
   }
+  for (const auto& fb : cloud_fs_options.fallback_buckets) {
+    if (!st.IsNotFound()) break;
+    st = GetStorageProvider()->GetCloudObjectSize(
+        fb.GetBucketName(), fallbackname(fb, fname), remote_size);
+  }
   return st;
 }
 
@@ -115,6 +130,11 @@ IOStatus CloudFileSystemImpl::GetCloudObjectModificationTime(
   if (st.IsNotFound() && HasSrcBucket() && !SrcMatchesDest()) {
     st = GetStorageProvider()->GetCloudObjectModificationTime(
         GetSrcBucketName(), srcname(fname), time);
+  }
+  for (const auto& fb : cloud_fs_options.fallback_buckets) {
+    if (!st.IsNotFound()) break;
+    st = GetStorageProvider()->GetCloudObjectModificationTime(
+        fb.GetBucketName(), fallbackname(fb, fname), time);
   }
   return st;
 }
@@ -144,6 +164,17 @@ IOStatus CloudFileSystemImpl::ListCloudObjects(
           GetStorageProvider()->Name(), st.ToString().c_str());
     }
   }
+  for (const auto& fb : cloud_fs_options.fallback_buckets) {
+    if (!st.ok()) break;
+    st = GetStorageProvider()->ListCloudObjects(fb.GetBucketName(),
+                                                fb.GetObjectPath(), result);
+    if (!st.ok()) {
+      Log(InfoLogLevel::ERROR_LEVEL, info_log_,
+          "[%s] GetChildren fallback bucket %s %s error from %s %s", Name(),
+          fb.GetBucketName().c_str(), path.c_str(),
+          GetStorageProvider()->Name(), st.ToString().c_str());
+    }
+  }
   return st;
 }
 
@@ -161,6 +192,16 @@ IOStatus CloudFileSystemImpl::NewCloudReadableFile(
   if (HasSrcBucket() && !SrcMatchesDest()) {  // read from src bucket
     st = GetStorageProvider()->NewCloudReadableFile(
         GetSrcBucketName(), srcname(fname), options, result, dbg);
+    if (st.ok()) {
+      return st;
+    }
+  }
+  for (const auto& fb : cloud_fs_options.fallback_buckets) {
+    st = GetStorageProvider()->NewCloudReadableFile(
+        fb.GetBucketName(), fallbackname(fb, fname), options, result, dbg);
+    if (st.ok()) {
+      return st;
+    }
   }
   return st;
 }
@@ -1085,6 +1126,11 @@ std::string CloudFileSystemImpl::destname(const std::string& localname) {
   assert(cloud_fs_options.dest_bucket.IsValid());
   return cloud_fs_options.dest_bucket.GetObjectPath() + "/" +
          basename(localname);
+}
+
+std::string CloudFileSystemImpl::fallbackname(const BucketOptions& bucket,
+                                              const std::string& localname) {
+  return bucket.GetObjectPath() + "/" + basename(localname);
 }
 
 //

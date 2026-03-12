@@ -341,6 +341,10 @@ class CloudFileSystemImpl : public CloudFileSystem {
   // Converts a local pathname to an object name in the dest bucket
   std::string destname(const std::string& localname);
 
+  // Converts a local pathname to an object name using a specific bucket's path
+  static std::string fallbackname(const BucketOptions& bucket,
+                                  const std::string& localname);
+
   // Does the dir need to be re-initialized?
   IOStatus NeedsReinitialization(const std::string& clone_dir, bool* do_reinit);
 

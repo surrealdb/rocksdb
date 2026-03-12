@@ -4096,6 +4096,21 @@ extern ROCKSDB_LIBRARY_API uint64_t
 rocksdb_cloud_fs_options_get_background_wal_sync_interval_ms(
     rocksdb_cloud_fs_options_t* opts);
 
+/* Cloud fallback bucket options */
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_add_fallback_bucket(
+    rocksdb_cloud_fs_options_t* opts,
+    rocksdb_cloud_bucket_options_t* bucket);
+
+extern ROCKSDB_LIBRARY_API int
+rocksdb_cloud_fs_options_get_num_fallback_buckets(
+    rocksdb_cloud_fs_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_clear_fallback_buckets(
+    rocksdb_cloud_fs_options_t* opts);
+
 /* Cloud bucket options */
 
 extern ROCKSDB_LIBRARY_API rocksdb_cloud_bucket_options_t*

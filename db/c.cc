@@ -9264,6 +9264,24 @@ uint64_t rocksdb_cloud_fs_options_get_background_wal_sync_interval_ms(
   return opts->rep.background_wal_sync_interval_ms;
 }
 
+// Cloud fallback bucket options
+
+void rocksdb_cloud_fs_options_add_fallback_bucket(
+    rocksdb_cloud_fs_options_t* opts,
+    rocksdb_cloud_bucket_options_t* bucket) {
+  opts->rep.fallback_buckets.push_back(bucket->rep);
+}
+
+int rocksdb_cloud_fs_options_get_num_fallback_buckets(
+    rocksdb_cloud_fs_options_t* opts) {
+  return static_cast<int>(opts->rep.fallback_buckets.size());
+}
+
+void rocksdb_cloud_fs_options_clear_fallback_buckets(
+    rocksdb_cloud_fs_options_t* opts) {
+  opts->rep.fallback_buckets.clear();
+}
+
 // CloudBucketOptions
 
 rocksdb_cloud_bucket_options_t* rocksdb_cloud_bucket_options_create() {
