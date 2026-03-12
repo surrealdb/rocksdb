@@ -29,6 +29,8 @@ class DBCloudImpl : public DBCloud {
   Status CheckpointToCloud(const BucketOptions& destination,
                            const CheckpointToCloudOptions& options) override;
 
+  Status CaptureForkPoint(ForkPoint* result) override;
+
  protected:
   // The CloudFileSystem used by this open instance.
   CloudFileSystem* cfs_;

@@ -29,6 +29,8 @@ class CloudTransactionDBImpl : public CloudTransactionDB {
   Status CheckpointToCloud(const BucketOptions& destination,
                            const CheckpointToCloudOptions& options) override;
 
+  Status CaptureForkPoint(ForkPoint* result) override;
+
  private:
   DBCloudImpl* db_cloud_;
   TransactionDB* txn_db_;

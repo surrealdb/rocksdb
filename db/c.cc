@@ -8891,6 +8891,7 @@ using ROCKSDB_NAMESPACE::CloudOptimisticTransactionDB;
 using ROCKSDB_NAMESPACE::CloudTransactionDB;
 using ROCKSDB_NAMESPACE::DBCloud;
 using ROCKSDB_NAMESPACE::FileSystem;
+using ROCKSDB_NAMESPACE::ForkPoint;
 
 struct rocksdb_cloud_fs_t {
   CloudFileSystem* rep;
@@ -9536,6 +9537,21 @@ void rocksdb_cloud_db_checkpoint_to_cloud(
             db->rep->CheckpointToCloud(destination->rep, options->rep));
 }
 
+void rocksdb_cloud_db_capture_fork_point(rocksdb_cloud_db_t* db,
+                                         char** epoch_out,
+                                         uint64_t* file_number_out,
+                                         char** cookie_out, char** errptr) {
+  ForkPoint fp;
+  auto st = db->rep->CaptureForkPoint(&fp);
+  if (!st.ok()) {
+    SaveError(errptr, st);
+    return;
+  }
+  *epoch_out = strdup(fp.epoch.c_str());
+  *file_number_out = fp.file_number;
+  *cookie_out = strdup(fp.cloud_manifest_cookie.c_str());
+}
+
 char** rocksdb_cloud_db_list_column_families(const rocksdb_options_t* options,
                                              const char* name, size_t* lencfs,
                                              char** errptr) {
@@ -9621,6 +9637,22 @@ rocksdb_optimistictransactiondb_t* rocksdb_cloud_otxn_db_get_txn_db(
   return result;
 }
 
+void rocksdb_cloud_otxn_db_capture_fork_point(rocksdb_cloud_otxn_db_t* db,
+                                              char** epoch_out,
+                                              uint64_t* file_number_out,
+                                              char** cookie_out,
+                                              char** errptr) {
+  ForkPoint fp;
+  auto st = db->rep->CaptureForkPoint(&fp);
+  if (!st.ok()) {
+    SaveError(errptr, st);
+    return;
+  }
+  *epoch_out = strdup(fp.epoch.c_str());
+  *file_number_out = fp.file_number;
+  *cookie_out = strdup(fp.cloud_manifest_cookie.c_str());
+}
+
 // CloudTransactionDB
 
 rocksdb_cloud_txn_db_t* rocksdb_cloud_txn_db_open(
@@ -9690,6 +9722,22 @@ rocksdb_transactiondb_t* rocksdb_cloud_txn_db_get_txn_db(
   rocksdb_transactiondb_t* result = new rocksdb_transactiondb_t;
   result->rep = txn_db;
   return result;
+}
+
+void rocksdb_cloud_txn_db_capture_fork_point(rocksdb_cloud_txn_db_t* db,
+                                             char** epoch_out,
+                                             uint64_t* file_number_out,
+                                             char** cookie_out,
+                                             char** errptr) {
+  ForkPoint fp;
+  auto st = db->rep->CaptureForkPoint(&fp);
+  if (!st.ok()) {
+    SaveError(errptr, st);
+    return;
+  }
+  *epoch_out = strdup(fp.epoch.c_str());
+  *file_number_out = fp.file_number;
+  *cookie_out = strdup(fp.cloud_manifest_cookie.c_str());
 }
 
 #endif  // ROCKSDB_CLOUD

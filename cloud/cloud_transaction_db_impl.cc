@@ -39,6 +39,10 @@ Status CloudTransactionDBImpl::CheckpointToCloud(
   return db_cloud_->CheckpointToCloud(destination, options);
 }
 
+Status CloudTransactionDBImpl::CaptureForkPoint(ForkPoint* result) {
+  return db_cloud_->CaptureForkPoint(result);
+}
+
 Status CloudTransactionDB::Open(
     const Options& options, const TransactionDBOptions& txn_db_options,
     const std::string& name, const std::string& persistent_cache_path,
