@@ -4147,7 +4147,7 @@ rocksdb_cloud_fs_options_add_replication_bucket(
     rocksdb_cloud_bucket_options_t* bucket);
 
 extern ROCKSDB_LIBRARY_API int
-rocksdb_cloud_fs_options_num_replication_buckets(
+rocksdb_cloud_fs_options_get_num_replication_buckets(
     rocksdb_cloud_fs_options_t* opts);
 
 extern ROCKSDB_LIBRARY_API void
