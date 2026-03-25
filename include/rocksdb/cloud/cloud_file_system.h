@@ -394,6 +394,14 @@ class CloudFileSystemOptions {
   // Default: 1 hour
   std::optional<std::chrono::seconds> cloud_file_deletion_delay;
 
+  // When true, cloud object listing in GetChildren is suppressed during the
+  // DB open phase only. After DB::Open returns, GetChildren resumes normal
+  // behavior. This avoids expensive ListCloudObjects calls (src + dest +
+  // fallback buckets) when the freshly-fetched MANIFEST is authoritative.
+  // Best used together with resync_on_open = true.
+  // Default: false
+  bool skip_cloud_listing_on_open = false;
+
   // Maximum total bytes of SST/blob files cached locally.
   // When set (> 0), keep_local_sst_files is implicitly true, and
   // the least-recently-accessed files are evicted when over this limit.
@@ -437,6 +445,21 @@ class CloudFileSystemOptions {
   // background_wal_sync_to_cloud is true.
   // Default: 5000 (5 seconds)
   uint64_t background_wal_sync_interval_ms = 5000;
+
+  // Buckets in other regions to replicate SST/MANIFEST/CLOUDMANIFEST to.
+  // Each bucket gets its own CloudStorageProvider (for cross-region S3 clients).
+  // SSTs are replicated asynchronously after primary upload.
+  // MANIFEST/CLOUDMANIFEST replication is gated on SST completion.
+  // Default: empty (no replication)
+  std::vector<BucketOptions> replication_buckets;
+
+  // Number of TLS connections to pre-establish with the cloud storage
+  // endpoint during initialization. Each connection issues a lightweight
+  // HEAD request in parallel. Reduces first-download latency by avoiding
+  // TLS handshake overhead on the critical path.
+  // Set to 0 to disable.
+  // Default: 0
+  int warm_connection_pool_size = 0;
 
   // Rate limiter for cloud upload operations (SST, MANIFEST, WAL, IDENTITY).
   // nullptr means no throttling. Use NewGenericRateLimiter() to create.

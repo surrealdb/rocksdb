@@ -883,6 +883,16 @@ struct DBOptions {
   // Default: false
   bool open_files_async = false;
 
+  // Controls how many SST files have their metadata (index, filter, etc.)
+  // loaded eagerly during initial DB::Open(). The effective limit is
+  // min(initial_table_load_limit, table_cache_capacity / 4) for positive
+  // values. Remaining files are opened lazily on first access.
+  // Set to 0 to open all files (eliminates first-query latency spikes).
+  // Set to -1 to use table_cache_capacity/4 with no additional limit.
+  // Higher values trade longer open time for more predictable read latency.
+  // Default: 16
+  int initial_table_load_limit = 16;
+
   // Once write-ahead logs exceed this size, we will start forcing the flush of
   // column families whose memtables are backed by the oldest live WAL file
   // (i.e. the ones that are causing all the space amplification). If set to 0

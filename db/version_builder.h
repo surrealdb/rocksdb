@@ -60,7 +60,8 @@ class VersionBuilder {
                            bool is_initial_load,
                            const MutableCFOptions& mutable_cf_options,
                            size_t max_file_size_for_l0_meta_pin,
-                           const ReadOptions& read_options);
+                           const ReadOptions& read_options,
+                           int initial_table_load_limit = 16);
 
   //============APIs only used by VersionEditHandlerPointInTime ============//
 

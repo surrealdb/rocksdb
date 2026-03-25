@@ -80,6 +80,10 @@ void CloudFileSystemOptions::Dump(Logger* log) const {
          new_cookie_on_open.c_str());
   Header(log, "COptions.delete_cloud_invisible_files_on_open: %d",
          delete_cloud_invisible_files_on_open);
+  Header(log, "     COptions.skip_cloud_listing_on_open: %d",
+         skip_cloud_listing_on_open);
+  Header(log, "       COptions.warm_connection_pool_size: %d",
+         warm_connection_pool_size);
   if (cloud_file_deletion_delay) {
     Header(log, "          COptions.cloud_file_deletion_delay: %lld",
            static_cast<long long>(cloud_file_deletion_delay->count()));
@@ -348,6 +352,12 @@ const std::unordered_map<std::string, OptionTypeInfo>
         {"skip_cloud_children_files",
          {offset_of(&CloudFileSystemOptions::skip_cloud_files_in_getchildren),
           OptionType::kBoolean}},
+        {"skip_cloud_listing_on_open",
+         {offset_of(&CloudFileSystemOptions::skip_cloud_listing_on_open),
+          OptionType::kBoolean}},
+        {"warm_connection_pool_size",
+         {offset_of(&CloudFileSystemOptions::warm_connection_pool_size),
+          OptionType::kInt}},
         {"constant_sst_file_size_in_manager",
          {offset_of(&CloudFileSystemOptions::
                         constant_sst_file_size_in_sst_file_manager),

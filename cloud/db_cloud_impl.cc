@@ -194,6 +194,12 @@ Status DBCloud::Open(const Options& opt, const std::string& local_dbname,
   // uploaded to S3 for every update, so always enable rolling of Manifest file
   options.max_manifest_file_size = DBCloudImpl::max_manifest_file_size;
 
+  auto* cfs_impl =
+      static_cast<CloudFileSystemImpl*>(options.env->GetFileSystem().get());
+  if (cfs->GetCloudFileSystemOptions().skip_cloud_listing_on_open) {
+    cfs_impl->SetOpenPhaseActive(true);
+  }
+
   std::unique_ptr<DB> db;
   std::string dbid;
   if (read_only) {
@@ -202,6 +208,8 @@ Status DBCloud::Open(const Options& opt, const std::string& local_dbname,
   } else {
     st = DB::Open(options, local_dbname, column_families, handles, &db);
   }
+
+  cfs_impl->SetOpenPhaseActive(false);
 
   if (new_db && st.ok() && cfs->HasDestBucket() &&
       cfs->GetCloudFileSystemOptions().roll_cloud_manifest_on_open) {

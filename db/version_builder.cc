@@ -1643,7 +1643,8 @@ class VersionBuilder::Rep {
                            bool is_initial_load,
                            const MutableCFOptions& mutable_cf_options,
                            size_t max_file_size_for_l0_meta_pin,
-                           const ReadOptions& read_options) {
+                           const ReadOptions& read_options,
+                           int initial_table_load_limit = 16) {
     assert(table_cache_ != nullptr);
     assert(!track_found_and_missing_files_ || valid_version_available_);
 
@@ -1653,10 +1654,6 @@ class VersionBuilder::Rep {
     size_t max_load = std::numeric_limits<size_t>::max();
 
     if (!always_load) {
-      // If it is initial loading and not set to always loading all the
-      // files, we only load up to kInitialLoadLimit files, to limit the
-      // time reopening the DB.
-      const size_t kInitialLoadLimit = 16;
       size_t load_limit;
       // If the table cache is not 1/4 full, we pin the table handle to
       // file metadata to avoid the cache read costs when reading the file.
@@ -1665,7 +1662,17 @@ class VersionBuilder::Rep {
       // of the DB excceeds table cache capacity, eventually no table reader
       // will be pinned and LRU will be followed.
       if (is_initial_load) {
-        load_limit = std::min(kInitialLoadLimit, table_cache_capacity / 4);
+        size_t effective_limit;
+        if (initial_table_load_limit == 0) {
+          effective_limit = std::numeric_limits<size_t>::max();
+        } else if (initial_table_load_limit < 0) {
+          effective_limit = table_cache_capacity / 4;
+        } else {
+          effective_limit = std::min(
+              static_cast<size_t>(initial_table_load_limit),
+              table_cache_capacity / 4);
+        }
+        load_limit = effective_limit;
       } else {
         load_limit = table_cache_capacity / 4;
       }
@@ -1740,11 +1747,13 @@ Status VersionBuilder::LoadTableHandlers(
     InternalStats* internal_stats, int max_threads,
     bool prefetch_index_and_filter_in_cache, bool is_initial_load,
     const MutableCFOptions& mutable_cf_options,
-    size_t max_file_size_for_l0_meta_pin, const ReadOptions& read_options) {
+    size_t max_file_size_for_l0_meta_pin, const ReadOptions& read_options,
+    int initial_table_load_limit) {
   return rep_->LoadTableHandlers(internal_stats, max_threads,
                                  prefetch_index_and_filter_in_cache,
                                  is_initial_load, mutable_cf_options,
-                                 max_file_size_for_l0_meta_pin, read_options);
+                                 max_file_size_for_l0_meta_pin, read_options,
+                                 initial_table_load_limit);
 }
 
 void VersionBuilder::CreateOrReplaceSavePoint() {

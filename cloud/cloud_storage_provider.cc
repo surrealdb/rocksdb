@@ -4,6 +4,8 @@
 #include "rocksdb/cloud/cloud_storage_provider.h"
 
 #include <cinttypes>
+#include <thread>
+#include <vector>
 
 #include "cloud/filename.h"
 #include "file/filename.h"
@@ -288,6 +290,26 @@ Status CloudStorageProviderImpl::PrepareOptions(const ConfigOptions& options) {
           cfs_->GetDestBucketName().c_str(), st.ToString().c_str());
     }
   }
+
+  int warmup_size =
+      cfs_->GetCloudFileSystemOptions().warm_connection_pool_size;
+  if (st.ok() && warmup_size > 0 && cfs_->HasDestBucket()) {
+    Log(InfoLogLevel::INFO_LEVEL, cfs_->GetLogger(),
+        "[%s] Pre-warming %d TLS connections to %s", Name(), warmup_size,
+        cfs_->GetDestBucketName().c_str());
+    std::vector<std::thread> warmup_threads;
+    warmup_threads.reserve(warmup_size);
+    for (int i = 0; i < warmup_size; i++) {
+      warmup_threads.emplace_back([this]() {
+        ExistsCloudObject(cfs_->GetDestBucketName(),
+                          cfs_->GetDestObjectPath() + "/__connection_warmup__");
+      });
+    }
+    for (auto& t : warmup_threads) {
+      t.join();
+    }
+  }
+
   return st;
 }
 

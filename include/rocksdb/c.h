@@ -1549,6 +1549,10 @@ extern ROCKSDB_LIBRARY_API void rocksdb_options_set_max_file_opening_threads(
     rocksdb_options_t*, int);
 extern ROCKSDB_LIBRARY_API int rocksdb_options_get_max_file_opening_threads(
     rocksdb_options_t*);
+extern ROCKSDB_LIBRARY_API void rocksdb_options_set_initial_table_load_limit(
+    rocksdb_options_t*, int);
+extern ROCKSDB_LIBRARY_API int rocksdb_options_get_initial_table_load_limit(
+    rocksdb_options_t*);
 extern ROCKSDB_LIBRARY_API void rocksdb_options_set_max_total_wal_size(
     rocksdb_options_t* opt, uint64_t n);
 extern ROCKSDB_LIBRARY_API uint64_t
@@ -3951,6 +3955,22 @@ rocksdb_cloud_fs_options_set_skip_cloud_files_in_getchildren(
 
 extern ROCKSDB_LIBRARY_API unsigned char
 rocksdb_cloud_fs_options_get_skip_cloud_files_in_getchildren(
+    rocksdb_cloud_fs_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_skip_cloud_listing_on_open(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val);
+
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_cloud_fs_options_get_skip_cloud_listing_on_open(
+    rocksdb_cloud_fs_options_t* opts);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_warm_connection_pool_size(
+    rocksdb_cloud_fs_options_t* opts, int val);
+
+extern ROCKSDB_LIBRARY_API int
+rocksdb_cloud_fs_options_get_warm_connection_pool_size(
     rocksdb_cloud_fs_options_t* opts);
 
 extern ROCKSDB_LIBRARY_API void
