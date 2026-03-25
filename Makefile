@@ -2023,6 +2023,9 @@ wide_columns_helper_test: $(OBJ_DIR)/db/wide/wide_columns_helper_test.o $(TEST_L
 interval_test: $(OBJ_DIR)/util/interval_test.o $(TEST_LIBRARY) $(LIBRARY)
 	$(AM_LINK)
 
+gcp_db_cloud_test: $(OBJ_DIR)/cloud/gcp/gcp_db_cloud_test.o $(TEST_LIBRARY) $(LIBRARY)
+	$(AM_LINK)
+
 #-------------------------------------------------
 # make install related stuff
 PREFIX ?= /usr/local
