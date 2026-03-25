@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <unordered_set>
 #include <vector>
 
@@ -180,6 +181,7 @@ extern "C" {
 
 struct rocksdb_t {
   DB* rep;
+  bool borrowed = false;
 };
 struct rocksdb_status_ptr_t {
   Status* rep;
@@ -331,6 +333,7 @@ struct rocksdb_transactiondb_options_t {
 };
 struct rocksdb_transactiondb_t {
   TransactionDB* rep;
+  bool borrowed = false;
 };
 struct rocksdb_transaction_options_t {
   TransactionOptions rep;
@@ -346,6 +349,7 @@ struct rocksdb_checkpoint_t {
 };
 struct rocksdb_optimistictransactiondb_t {
   OptimisticTransactionDB* rep;
+  bool borrowed = false;
 };
 struct rocksdb_optimistictransaction_options_t {
   OptimisticTransactionOptions rep;
@@ -1570,7 +1574,9 @@ void rocksdb_checkpoint_object_destroy(rocksdb_checkpoint_t* checkpoint) {
 }
 
 void rocksdb_close(rocksdb_t* db) {
-  delete db->rep;
+  if (!db->borrowed) {
+    delete db->rep;
+  }
   delete db;
 }
 
@@ -8343,7 +8349,9 @@ rocksdb_iterator_t* rocksdb_transactiondb_create_iterator_cf(
 }
 
 void rocksdb_transactiondb_close(rocksdb_transactiondb_t* txn_db) {
-  delete txn_db->rep;
+  if (!txn_db->borrowed) {
+    delete txn_db->rep;
+  }
   delete txn_db;
 }
 
@@ -8477,7 +8485,9 @@ void rocksdb_optimistictransactiondb_write(
 
 void rocksdb_optimistictransactiondb_close(
     rocksdb_optimistictransactiondb_t* otxn_db) {
-  delete otxn_db->rep;
+  if (!otxn_db->borrowed) {
+    delete otxn_db->rep;
+  }
   delete otxn_db;
 }
 
@@ -9338,6 +9348,24 @@ void rocksdb_cloud_fs_options_clear_fallback_buckets(
   opts->rep.fallback_buckets.clear();
 }
 
+// Cross-region replication buckets
+
+void rocksdb_cloud_fs_options_add_replication_bucket(
+    rocksdb_cloud_fs_options_t* opts,
+    rocksdb_cloud_bucket_options_t* bucket) {
+  opts->rep.replication_buckets.push_back(bucket->rep);
+}
+
+int rocksdb_cloud_fs_options_get_num_replication_buckets(
+    rocksdb_cloud_fs_options_t* opts) {
+  return static_cast<int>(opts->rep.replication_buckets.size());
+}
+
+void rocksdb_cloud_fs_options_clear_replication_buckets(
+    rocksdb_cloud_fs_options_t* opts) {
+  opts->rep.replication_buckets.clear();
+}
+
 // CloudBucketOptions
 
 rocksdb_cloud_bucket_options_t* rocksdb_cloud_bucket_options_create() {
@@ -9431,8 +9459,11 @@ unsigned char rocksdb_cloud_checkpoint_options_get_flush_memtable(
 rocksdb_cloud_fs_t* rocksdb_cloud_fs_create(rocksdb_cloud_fs_options_t* options,
                                             char** errptr) {
 #ifdef USE_AWS
-  Aws::SDKOptions sdk_options;
-  Aws::InitAPI(sdk_options);
+  static std::once_flag aws_init_flag;
+  std::call_once(aws_init_flag, []() {
+    Aws::SDKOptions sdk_options;
+    Aws::InitAPI(sdk_options);
+  });
 
   CloudFileSystem* cfs;
   if (SaveError(errptr,
@@ -9451,6 +9482,7 @@ rocksdb_cloud_fs_t* rocksdb_cloud_fs_create(rocksdb_cloud_fs_options_t* options,
 }
 
 void rocksdb_cloud_fs_destroy(rocksdb_cloud_fs_t* cfs) {
+  if (!cfs) return;
   delete cfs->rep;
   delete cfs;
 }
@@ -9578,6 +9610,7 @@ void rocksdb_cloud_db_close(rocksdb_cloud_db_t* db) {
 rocksdb_t* rocksdb_cloud_db_get_base_db(rocksdb_cloud_db_t* db) {
   rocksdb_t* result = new rocksdb_t;
   result->rep = db->rep;
+  result->borrowed = true;
   return result;
 }
 
@@ -9662,8 +9695,12 @@ char** rocksdb_cloud_db_list_column_families(const rocksdb_options_t* options,
                                              const char* name, size_t* lencfs,
                                              char** errptr) {
   std::vector<std::string> fams;
-  SaveError(errptr, DBCloud::ListColumnFamilies(DBOptions(options->rep),
-                                                std::string(name), &fams));
+  if (SaveError(errptr, DBCloud::ListColumnFamilies(DBOptions(options->rep),
+                                                    std::string(name),
+                                                    &fams))) {
+    *lencfs = 0;
+    return nullptr;
+  }
 
   *lencfs = fams.size();
   char** column_families =
@@ -9719,6 +9756,7 @@ rocksdb_cloud_otxn_db_t* rocksdb_cloud_otxn_db_open_column_families(
     rocksdb_column_family_handle_t* c_handle =
         new rocksdb_column_family_handle_t;
     c_handle->rep = handles[i];
+    c_handle->immortal = false;
     column_family_handles[i] = c_handle;
   }
   rocksdb_cloud_otxn_db_t* result = new rocksdb_cloud_otxn_db_t;
@@ -9740,6 +9778,7 @@ rocksdb_optimistictransactiondb_t* rocksdb_cloud_otxn_db_get_txn_db(
   rocksdb_optimistictransactiondb_t* result =
       new rocksdb_optimistictransactiondb_t;
   result->rep = otxn_db;
+  result->borrowed = true;
   return result;
 }
 
@@ -9828,6 +9867,7 @@ rocksdb_cloud_txn_db_t* rocksdb_cloud_txn_db_open_column_families(
     rocksdb_column_family_handle_t* c_handle =
         new rocksdb_column_family_handle_t;
     c_handle->rep = handles[i];
+    c_handle->immortal = false;
     column_family_handles[i] = c_handle;
   }
   rocksdb_cloud_txn_db_t* result = new rocksdb_cloud_txn_db_t;
@@ -9848,6 +9888,7 @@ rocksdb_transactiondb_t* rocksdb_cloud_txn_db_get_txn_db(
   }
   rocksdb_transactiondb_t* result = new rocksdb_transactiondb_t;
   result->rep = txn_db;
+  result->borrowed = true;
   return result;
 }
 
