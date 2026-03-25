@@ -94,6 +94,7 @@ class BackgroundWALUploader {
 
  private:
   void DoUpload(void* arg);
+  void DoUploadImpl();
 
   CloudFileSystem* cfs_;
   std::string local_dbname_;

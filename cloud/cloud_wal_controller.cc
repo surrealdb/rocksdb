@@ -155,9 +155,9 @@ IOStatus CloudWALWritableFile::Sync(const IOOptions& opts,
     if (s.ok()) {
       s = kafka_producer_->Flush();
     }
+    if (!s.ok()) return s;
     sync_buffer_start_offset_ = current_offset_;
     sync_buffer_.clear();
-    if (!s.ok()) return s;
   }
 #endif
 
@@ -236,14 +236,16 @@ IOStatus BackgroundWALUploader::UploadWALFile(const std::string& local_path) {
 
 void BackgroundWALUploader::DoUpload(void* /*arg*/) {
   if (!running_.load(std::memory_order_relaxed)) return;
+  DoUploadImpl();
+}
 
+void BackgroundWALUploader::DoUploadImpl() {
   auto& base_fs = cfs_->GetBaseFileSystem();
   std::vector<std::string> children;
   auto st =
       base_fs->GetChildren(local_dbname_, IOOptions(), &children, nullptr);
   if (!st.ok()) return;
 
-  // Build a set of local WAL filenames for cleanup comparison
   std::set<std::string> local_wal_files;
   for (const auto& child : children) {
     if (!IsWalFile(child)) continue;
@@ -257,7 +259,6 @@ void BackgroundWALUploader::DoUpload(void* /*arg*/) {
     }
   }
 
-  // Clean up S3 WAL objects whose local files no longer exist (flushed to SSTs)
   if (cfs_->HasDestBucket()) {
     auto provider = cfs_->GetStorageProvider();
     std::string wal_prefix = cfs_->GetDestObjectPath() + "/wal/";
@@ -300,8 +301,7 @@ void BackgroundWALUploader::Stop() {
     scheduler_->CancelJob(job_handle_);
     job_handle_ = -1;
   }
-  // Final upload of all WAL files
-  DoUpload(nullptr);
+  DoUploadImpl();
   Log(InfoLogLevel::INFO_LEVEL, cfs_->GetLogger(),
       "[cloud_wal] Background WAL uploader stopped");
 }
