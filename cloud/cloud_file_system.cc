@@ -112,6 +112,16 @@ void CloudFileSystemOptions::Dump(Logger* log) const {
     Header(log, "           COptions.fallback_buckets[%zu].path: %s", i,
            fallback_buckets[i].GetObjectPath().c_str());
   }
+  Header(log, "          COptions.replication_buckets count: %zu",
+         replication_buckets.size());
+  for (size_t i = 0; i < replication_buckets.size(); ++i) {
+    Header(log, "        COptions.replication_buckets[%zu].bucket: %s", i,
+           replication_buckets[i].GetBucketName().c_str());
+    Header(log, "        COptions.replication_buckets[%zu].path: %s", i,
+           replication_buckets[i].GetObjectPath().c_str());
+    Header(log, "        COptions.replication_buckets[%zu].region: %s", i,
+           replication_buckets[i].GetRegion().c_str());
+  }
 }
 
 bool CloudFileSystemOptions::GetNameFromEnvironment(const char* name,

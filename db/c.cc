@@ -9298,6 +9298,24 @@ void rocksdb_cloud_fs_options_clear_fallback_buckets(
   opts->rep.fallback_buckets.clear();
 }
 
+// Cross-region replication buckets
+
+void rocksdb_cloud_fs_options_add_replication_bucket(
+    rocksdb_cloud_fs_options_t* opts,
+    rocksdb_cloud_bucket_options_t* bucket) {
+  opts->rep.replication_buckets.push_back(bucket->rep);
+}
+
+int rocksdb_cloud_fs_options_num_replication_buckets(
+    rocksdb_cloud_fs_options_t* opts) {
+  return static_cast<int>(opts->rep.replication_buckets.size());
+}
+
+void rocksdb_cloud_fs_options_clear_replication_buckets(
+    rocksdb_cloud_fs_options_t* opts) {
+  opts->rep.replication_buckets.clear();
+}
+
 // CloudBucketOptions
 
 rocksdb_cloud_bucket_options_t* rocksdb_cloud_bucket_options_create() {

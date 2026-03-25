@@ -7,6 +7,7 @@
 #include <cinttypes>
 
 #include "cloud/cloud_manifest.h"
+#include "cloud/cloud_replication_manager.h"
 #include "cloud/cloud_scheduler.h"
 #include "cloud/cloud_wal_controller.h"
 #include "cloud/filename.h"
@@ -50,6 +51,10 @@ CloudFileSystemImpl::CloudFileSystemImpl(
 }
 
 CloudFileSystemImpl::~CloudFileSystemImpl() {
+  if (replication_manager_) {
+    replication_manager_->Stop();
+    replication_manager_.reset();
+  }
   if (wal_controller_) {
     wal_controller_->Stop();
     wal_controller_.reset();
@@ -815,6 +820,12 @@ IOStatus CloudFileSystemImpl::DeleteCloudFileFromDest(
   auto base = basename(fname);
   auto path = GetDestObjectPath() + pathsep + base;
   auto bucket = GetDestBucketName();
+
+  // Also delete from replication buckets
+  if (replication_manager_) {
+    replication_manager_->ScheduleDeletion(path);
+  }
+
   if (!cloud_file_deletion_scheduler_) {
     return GetStorageProvider()->DeleteCloudObject(bucket, path);
   }
@@ -2113,6 +2124,23 @@ IOStatus CloudFileSystemImpl::RollNewCookie(
       return st;
     }
   }
+
+  // Replicate to secondary buckets: wait for all pending SST replications,
+  // then upload MANIFEST and CLOUDMANIFEST in the same order.
+  if (replication_manager_) {
+    st = replication_manager_->WaitForAllPending();
+    if (st.ok()) {
+      st = replication_manager_->ReplicateManifestAndCloudManifest(
+          local_dbname, delta.epoch, cookie, GetDestObjectPath());
+    }
+    if (!st.ok()) {
+      Log(InfoLogLevel::ERROR_LEVEL, info_log_,
+          "[cloud_fs_impl] Replication of MANIFEST/CLOUDMANIFEST failed: %s",
+          st.ToString().c_str());
+      return st;
+    }
+  }
+
   return IOStatus::OK();
 }
 
@@ -2267,6 +2295,16 @@ Status CloudFileSystemImpl::PrepareOptions(const ConfigOptions& options) {
         this, base_fs_, cloud_fs_options, info_log_);
   }
 
+  // Initialize replication manager if replication buckets are configured
+  if (!cloud_fs_options.replication_buckets.empty()) {
+    replication_manager_ = std::make_unique<CloudReplicationManager>(
+        cloud_fs_options, info_log_);
+    status = replication_manager_->Initialize(this);
+    if (!status.ok()) {
+      return status;
+    }
+  }
+
   // start the purge thread only if there is a destination bucket
   if (cloud_fs_options.dest_bucket.IsValid() && cloud_fs_options.run_purger) {
     CloudFileSystemImpl* cloud = this;
@@ -2330,6 +2368,20 @@ Status CloudFileSystemImpl::CheckValidity() const {
     return Status::InvalidArgument(
         "keep_local_log_files=false requires either Kafka or background "
         "cloud WAL sync to be enabled");
+  }
+
+  for (size_t i = 0; i < cloud_fs_options.replication_buckets.size(); ++i) {
+    const auto& rb = cloud_fs_options.replication_buckets[i];
+    if (rb.GetBucketName().empty() || rb.GetObjectPath().empty()) {
+      return Status::InvalidArgument(
+          "replication_buckets[" + std::to_string(i) +
+          "] must have both bucket name and object path");
+    }
+    if (rb.GetRegion().empty()) {
+      return Status::InvalidArgument(
+          "replication_buckets[" + std::to_string(i) +
+          "] must have a region specified");
+    }
   }
 
   return Status::OK();

@@ -5,6 +5,7 @@
 
 #include <cinttypes>
 
+#include "cloud/cloud_replication_manager.h"
 #include "cloud/filename.h"
 #include "file/filename.h"
 #include "rocksdb/cloud/cloud_file_system.h"
@@ -184,7 +185,14 @@ IOStatus CloudStorageWritableFileImpl::Close(const IOOptions& opts,
       return status_;
     }
 
-    if (!cfs_->GetCloudFileSystemOptions().keep_local_sst_files) {
+    auto* rep_mgr = cfs_->GetReplicationManager();
+    if (rep_mgr) {
+      rep_mgr->ScheduleReplication(fname_, cloud_fname_);
+    }
+
+    bool has_pending_replication = rep_mgr && rep_mgr->HasPendingReplication(fname_);
+    if (!cfs_->GetCloudFileSystemOptions().keep_local_sst_files &&
+        !has_pending_replication) {
       status_ = cfs_->GetBaseFileSystem()->DeleteFile(fname_, opts, dbg);
       if (!status_.ok()) {
         Log(InfoLogLevel::ERROR_LEVEL, cfs_->GetLogger(),

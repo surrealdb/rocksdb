@@ -15,6 +15,7 @@
 
 namespace ROCKSDB_NAMESPACE {
 class CloudManifest;
+class CloudReplicationManager;
 class CloudScheduler;
 class CloudStorageReadableFile;
 class CloudWALController;
@@ -471,6 +472,12 @@ class CloudFileSystemImpl : public CloudFileSystem {
   std::shared_ptr<CloudFileDeletionScheduler> cloud_file_deletion_scheduler_;
   std::unique_ptr<LocalSstCache> local_sst_cache_;
   std::unique_ptr<CloudWALController> wal_controller_;
+  std::unique_ptr<CloudReplicationManager> replication_manager_;
+
+ public:
+  CloudReplicationManager* GetReplicationManager() const override {
+    return replication_manager_.get();
+  }
 };
 
 }  // namespace ROCKSDB_NAMESPACE

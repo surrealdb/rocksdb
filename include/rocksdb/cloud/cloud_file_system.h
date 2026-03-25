@@ -54,6 +54,7 @@ namespace ROCKSDB_NAMESPACE {
 
 class CloudFileSystem;
 class CloudManifest;
+class CloudReplicationManager;
 class CloudStorageProvider;
 
 enum CloudType : unsigned char {
@@ -438,6 +439,13 @@ class CloudFileSystemOptions {
   // Default: 5000 (5 seconds)
   uint64_t background_wal_sync_interval_ms = 5000;
 
+  // Buckets in other regions to replicate SST/MANIFEST/CLOUDMANIFEST to.
+  // Each bucket gets its own CloudStorageProvider (for cross-region S3 clients).
+  // SSTs are replicated asynchronously after primary upload.
+  // MANIFEST/CLOUDMANIFEST replication is gated on SST completion.
+  // Default: empty (no replication)
+  std::vector<BucketOptions> replication_buckets;
+
   // Rate limiter for cloud upload operations (SST, MANIFEST, WAL, IDENTITY).
   // nullptr means no throttling. Use NewGenericRateLimiter() to create.
   // Default: nullptr (unlimited)
@@ -706,6 +714,10 @@ class CloudFileSystem : public FileSystem {
   // cloud storage. Used by the local SST cache to track file sizes.
   virtual void OnLocalSstFileCreated(const std::string& /*fname*/,
                                      uint64_t /*size*/) {}
+
+  // Returns the replication manager, or nullptr if replication is not
+  // configured.
+  virtual CloudReplicationManager* GetReplicationManager() const { return nullptr; }
 };
 
 //
