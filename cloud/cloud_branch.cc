@@ -200,11 +200,20 @@ IOStatus CloudBranchUtil::ListRefObjects(
     return st;
   }
 
+  IOStatus first_error;
   for (const auto& obj : objects) {
     std::string content;
     std::string full_path = refs_prefix + obj;
     st = ReadStringFromCloud(provider, bucket, full_path, &content, local_fs);
-    if (!st.ok()) continue;
+    if (!st.ok()) {
+      if (st.IsNotFound()) {
+        continue;
+      }
+      if (first_error.ok()) {
+        first_error = st;
+      }
+      continue;
+    }
 
     BranchInfo info;
     st = DeserializeBranchInfo(content, &info);
@@ -212,7 +221,7 @@ IOStatus CloudBranchUtil::ListRefObjects(
       branches->push_back(std::move(info));
     }
   }
-  return IOStatus::OK();
+  return first_error.ok() ? IOStatus::OK() : first_error;
 }
 
 IOStatus CloudBranchUtil::WriteBranchRegistry(

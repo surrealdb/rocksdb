@@ -59,13 +59,12 @@ void CloudReplicationManager::ScheduleReplication(
   }
 
   for (size_t i = 0; i < targets_.size(); ++i) {
-    auto* self = this;
     std::string lp = local_path;
     std::string cn = cloud_name;
     size_t idx = i;
     scheduler_->ScheduleJob(
         std::chrono::microseconds(0),
-        [self, lp, cn, idx](void*) { self->DoReplicate(lp, cn, idx); },
+        [this, lp, cn, idx](void*) { DoReplicate(lp, cn, idx); },
         nullptr);
   }
 
@@ -77,30 +76,35 @@ void CloudReplicationManager::ScheduleReplication(
 void CloudReplicationManager::DoReplicate(const std::string& local_path,
                                           const std::string& cloud_name,
                                           size_t target_idx) {
-  if (stopped_.load(std::memory_order_relaxed)) return;
-  if (target_idx >= targets_.size()) return;
+  IOStatus st;
+  if (!stopped_.load(std::memory_order_relaxed) &&
+      target_idx < targets_.size()) {
+    const auto& target = targets_[target_idx];
+    auto object_path =
+        target.bucket.GetObjectPath() + "/" + basename(cloud_name);
 
-  const auto& target = targets_[target_idx];
-  auto object_path =
-      target.bucket.GetObjectPath() + "/" + basename(cloud_name);
+    st = target.provider->PutCloudObject(
+        local_path, target.bucket.GetBucketName(), object_path);
 
-  auto st = target.provider->PutCloudObject(
-      local_path, target.bucket.GetBucketName(), object_path);
-
-  if (!st.ok()) {
-    Log(InfoLogLevel::ERROR_LEVEL, info_log_,
-        "[replication] Failed to replicate %s to bucket %s: %s",
-        cloud_name.c_str(), target.bucket.GetBucketName().c_str(),
-        st.ToString().c_str());
-  } else {
-    Log(InfoLogLevel::DEBUG_LEVEL, info_log_,
-        "[replication] Replicated %s to bucket %s",
-        cloud_name.c_str(), target.bucket.GetBucketName().c_str());
+    if (!st.ok()) {
+      Log(InfoLogLevel::ERROR_LEVEL, info_log_,
+          "[replication] Failed to replicate %s to bucket %s: %s",
+          cloud_name.c_str(), target.bucket.GetBucketName().c_str(),
+          st.ToString().c_str());
+      failed_count_.fetch_add(1, std::memory_order_relaxed);
+    } else {
+      Log(InfoLogLevel::DEBUG_LEVEL, info_log_,
+          "[replication] Replicated %s to bucket %s",
+          cloud_name.c_str(), target.bucket.GetBucketName().c_str());
+    }
   }
 
   bool should_delete = false;
   {
     std::lock_guard<std::mutex> lk(mu_);
+    if (!st.ok()) {
+      last_error_ = st;
+    }
     auto it = pending_.find(local_path);
     if (it != pending_.end()) {
       it->second--;
@@ -137,12 +141,14 @@ IOStatus CloudReplicationManager::WaitForAllPending() {
   if (stopped_.load()) {
     return IOStatus::Aborted("Replication manager stopped");
   }
-  return IOStatus::OK();
+  IOStatus err = last_error_;
+  last_error_ = IOStatus::OK();
+  return err;
 }
 
 IOStatus CloudReplicationManager::ReplicateManifestAndCloudManifest(
     const std::string& local_dbname, const std::string& epoch,
-    const std::string& cookie, const std::string& dest_object_path) {
+    const std::string& cookie, const std::string& /*dest_object_path*/) {
   for (const auto& target : targets_) {
     auto manifest_local = ManifestFileWithEpoch(local_dbname, epoch);
     auto manifest_cloud =
@@ -204,8 +210,9 @@ bool CloudReplicationManager::HasPendingReplication(
 void CloudReplicationManager::Stop() {
   if (stopped_.exchange(true)) return;
   {
-    std::lock_guard<std::mutex> lk(mu_);
+    std::unique_lock<std::mutex> lk(mu_);
     cv_.notify_all();
+    cv_.wait(lk, [this]() { return pending_.empty(); });
   }
   Log(InfoLogLevel::INFO_LEVEL, info_log_,
       "[replication] CloudReplicationManager stopped");

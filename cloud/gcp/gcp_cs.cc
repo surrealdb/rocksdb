@@ -197,7 +197,7 @@ class GCSClientWrapper {
 
     ofs << os.rdbuf();
     ofs.close();
-    *file_size = os.size().value();
+    *file_size = os.size().value_or(0);
     guard.SetSize(*file_size);
     guard.SetSuccess(true);
     return gcp::Status(gcp::StatusCode::kOk, "OK");

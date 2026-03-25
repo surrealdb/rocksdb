@@ -7,6 +7,8 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "rocksdb/file_system.h"
 #include "rocksdb/rocksdb_namespace.h"
@@ -57,9 +59,13 @@ class LocalSstCache {
     std::list<std::string>::iterator lru_iter;
   };
 
-  // Evict least-recently-used files until total_size_ <= max_size_.
-  // Caller must hold mutex_.
-  void MaybeEvict();
+  // Collect files to evict and update accounting. Caller must hold mutex_.
+  // Returns victim paths and sizes for deletion outside the lock.
+  std::vector<std::pair<std::string, uint64_t>> CollectEvictionVictims();
+
+  // Delete evicted files from the filesystem. Must NOT hold mutex_.
+  void DeleteEvictedFiles(
+      const std::vector<std::pair<std::string, uint64_t>>& victims);
 
   const uint64_t max_size_;
   std::shared_ptr<FileSystem> base_fs_;

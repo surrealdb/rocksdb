@@ -83,6 +83,8 @@ class CloudReplicationManager {
   std::unordered_map<std::string, int> file_refcounts_;
 
   std::atomic<bool> stopped_{false};
+  std::atomic<uint64_t> failed_count_{0};
+  IOStatus last_error_;  // protected by mu_
 };
 
 }  // namespace ROCKSDB_NAMESPACE
