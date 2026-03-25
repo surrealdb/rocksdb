@@ -50,7 +50,9 @@ class AESCTRCipherStream : public BlockAccessCipherStream {
         initial_iv_high_(iv_high),
         initial_iv_low_(iv_low) {}
 
-  ~AESCTRCipherStream() = default;
+  ~AESCTRCipherStream() override {
+    OPENSSL_cleanse(const_cast<char*>(key_.data()), key_.size());
+  }
 
   size_t BlockSize() override {
 #if OPENSSL_VERSION_NUMBER >= 0x1010100fL && !defined(OPENSSL_NO_SM4)

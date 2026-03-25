@@ -92,6 +92,7 @@ Status AESCTRCipherStream::Cipher(uint64_t file_offset, char* data,
                        reinterpret_cast<const unsigned char*>(key_.data()),
                        iv.data(), (is_encrypt ? 1 : 0));
   if (ret != 1) {
+    FreeCipherContext(ctx);
     return Status::IOError("Failed to init cipher.");
   }
 
@@ -442,9 +443,6 @@ Status KeyManagedEncryptedEnv::NewRandomRWFile(
           "Unsupported encryption method: " +
           std::to_string(static_cast<int>(file_info.method)));
   }
-  if (!s.ok()) {
-    key_manager_->DeleteFile(fname);
-  }
   return s;
 }
 
@@ -505,10 +503,6 @@ Status KeyManagedEncryptedEnv::RenameFile(const std::string& src_fname,
 }
 
 Status KeyManagedEncryptedEnv::DeleteDir(const std::string& dname) {
-  Status s = key_manager_->DeleteFile(dname);
-  if (!s.ok()) {
-    return s;
-  }
   return target()->DeleteDir(dname);
 }
 
