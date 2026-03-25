@@ -42,6 +42,21 @@ Status CloudOptimisticTransactionDBImpl::CaptureForkPoint(ForkPoint* result) {
   return db_cloud_->CaptureForkPoint(result);
 }
 
+Status CloudOptimisticTransactionDBImpl::CreateBranch(
+    const BucketOptions& destination, const CreateBranchOptions& options,
+    BranchInfo* result) {
+  return db_cloud_->CreateBranch(destination, options, result);
+}
+
+Status CloudOptimisticTransactionDBImpl::DetachBranch() {
+  return db_cloud_->DetachBranch();
+}
+
+Status CloudOptimisticTransactionDBImpl::ListBranches(
+    std::vector<BranchInfo>* branches) {
+  return db_cloud_->ListBranches(branches);
+}
+
 Status CloudOptimisticTransactionDB::Open(
     const Options& options, const std::string& name,
     const std::string& persistent_cache_path,

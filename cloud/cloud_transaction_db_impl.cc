@@ -43,6 +43,21 @@ Status CloudTransactionDBImpl::CaptureForkPoint(ForkPoint* result) {
   return db_cloud_->CaptureForkPoint(result);
 }
 
+Status CloudTransactionDBImpl::CreateBranch(const BucketOptions& destination,
+                                            const CreateBranchOptions& options,
+                                            BranchInfo* result) {
+  return db_cloud_->CreateBranch(destination, options, result);
+}
+
+Status CloudTransactionDBImpl::DetachBranch() {
+  return db_cloud_->DetachBranch();
+}
+
+Status CloudTransactionDBImpl::ListBranches(
+    std::vector<BranchInfo>* branches) {
+  return db_cloud_->ListBranches(branches);
+}
+
 Status CloudTransactionDB::Open(
     const Options& options, const TransactionDBOptions& txn_db_options,
     const std::string& name, const std::string& persistent_cache_path,

@@ -5,7 +5,9 @@
 
 #include <cinttypes>
 
+#include "cloud/cloud_branch.h"
 #include "cloud/cloud_manifest.h"
+#include "cloud/cloud_wal_controller.h"
 #include "cloud/filename.h"
 #include "cloud/manifest_reader.h"
 #include "env/composite_env_wrapper.h"
@@ -338,6 +340,280 @@ Status DBCloudImpl::CaptureForkPoint(ForkPoint* result) {
       result->epoch.c_str(), result->file_number,
       result->cloud_manifest_cookie.c_str(), st.ToString().c_str());
   return st;
+}
+
+Status DBCloudImpl::CreateBranch(const BucketOptions& destination,
+                                 const CreateBranchOptions& options,
+                                 BranchInfo* result) {
+  auto* cfs =
+      static_cast<CloudFileSystemImpl*>(GetEnv()->GetFileSystem().get());
+  assert(cfs);
+  auto provider = cfs->GetStorageProvider();
+  auto& base_fs = cfs->GetBaseFileSystem();
+  auto& opts = cfs->GetCloudFileSystemOptions();
+
+  if (options.flush_memtable) {
+    FlushOptions fo;
+    fo.wait = true;
+    auto st = Flush(fo);
+    if (!st.ok()) return st;
+  }
+
+  DisableFileDeletions();
+
+  ForkPoint fp;
+  auto st = CaptureForkPoint(&fp);
+  if (!st.ok()) {
+    EnableFileDeletions();
+    return st;
+  }
+
+  // Clone the CloudManifest and set the parent reference
+  auto child_manifest = cfs->GetCloudManifest()->clone();
+  child_manifest->SetParentObjectPath(cfs->GetDestObjectPath());
+
+  // Generate child DBID
+  std::string parent_dbid;
+  st = GetDbIdentity(parent_dbid);
+  if (!st.ok()) {
+    EnableFileDeletions();
+    return st;
+  }
+  std::string child_dbid =
+      parent_dbid + std::string(CloudFileSystemImpl::DBID_SEPARATOR) +
+      Env::Default()->GenerateUniqueId();
+  child_dbid = trim(child_dbid);
+
+  // Write child CLOUDMANIFEST to a temp file and upload
+  auto cookie = opts.new_cookie_on_open.empty() ? opts.cookie_on_open
+                                                 : opts.new_cookie_on_open;
+  auto cm_local = std::string("/tmp/.cloud_branch_cm_") +
+                  trim(Env::Default()->GenerateUniqueId());
+  {
+    std::unique_ptr<WritableFileWriter> writer;
+    st = WritableFileWriter::Create(base_fs, cm_local, FileOptions(), &writer,
+                                    nullptr);
+    if (st.ok()) {
+      st = child_manifest->WriteToLog(std::move(writer));
+    }
+  }
+  if (st.ok()) {
+    st = provider->PutCloudObject(
+        cm_local, destination.GetBucketName(),
+        MakeCloudManifestFile(destination.GetObjectPath(), cookie));
+  }
+  base_fs->DeleteFile(cm_local, IOOptions(), nullptr);
+  if (!st.ok()) {
+    EnableFileDeletions();
+    return st;
+  }
+
+  // Write child IDENTITY
+  auto id_local = std::string("/tmp/.cloud_branch_id_") +
+                  trim(Env::Default()->GenerateUniqueId());
+  {
+    std::unique_ptr<FSWritableFile> f;
+    st = base_fs->NewWritableFile(id_local, FileOptions(), &f, nullptr);
+    if (st.ok()) {
+      st = f->Append(Slice(child_dbid), IOOptions(), nullptr);
+    }
+    if (st.ok()) {
+      st = f->Close(IOOptions(), nullptr);
+    }
+  }
+  if (st.ok()) {
+    st = provider->PutCloudObject(
+        id_local, destination.GetBucketName(),
+        destination.GetObjectPath() + "/IDENTITY");
+  }
+  base_fs->DeleteFile(id_local, IOOptions(), nullptr);
+  if (!st.ok()) {
+    EnableFileDeletions();
+    return st;
+  }
+
+  // Register the child DBID
+  if (st.ok()) {
+    st = cfs->SaveDbid(destination.GetBucketName(), child_dbid,
+                       destination.GetObjectPath());
+  }
+
+  // Upload MANIFEST for the child
+  if (st.ok()) {
+    auto epoch = cfs->GetCloudManifest()->GetCurrentEpoch();
+    auto manifest_local = ManifestFileWithEpoch(GetName(), epoch);
+    st = provider->PutCloudObject(
+        manifest_local, destination.GetBucketName(),
+        ManifestFileWithEpoch(destination.GetObjectPath(), epoch));
+  }
+
+  // Copy WAL files if requested
+  if (st.ok() && !options.flush_memtable && options.include_wal &&
+      opts.background_wal_sync_to_cloud) {
+    // Trigger synchronous upload of current WAL files
+    std::vector<std::string> children;
+    auto ls = base_fs->GetChildren(GetName(), IOOptions(), &children, nullptr);
+    if (ls.ok()) {
+      for (const auto& child : children) {
+        if (!IsWalFile(child)) continue;
+        auto local_path = GetName() + "/" + child;
+        auto cloud_path = cfs->GetDestObjectPath() + "/wal/" + child;
+        provider->PutCloudObject(local_path, cfs->GetDestBucketName(),
+                                 cloud_path);
+      }
+    }
+
+    // Server-side copy WAL files from parent path to child path
+    std::string wal_prefix = cfs->GetDestObjectPath() + "/wal/";
+    std::vector<std::string> wal_objects;
+    ls = provider->ListCloudObjects(cfs->GetDestBucketName(), wal_prefix,
+                                    &wal_objects);
+    if (ls.ok()) {
+      for (const auto& wal_obj : wal_objects) {
+        if (!IsWalFile(wal_obj)) continue;
+        auto src_path = wal_prefix + wal_obj;
+        auto dst_path = destination.GetObjectPath() + "/wal/" + wal_obj;
+        provider->CopyCloudObject(cfs->GetDestBucketName(), src_path,
+                                  destination.GetBucketName(), dst_path);
+      }
+    }
+  }
+
+  // Write ref object in parent's path
+  auto now = static_cast<uint64_t>(
+      Env::Default()->GetCurrentTime(nullptr).ok()
+          ? 0
+          : 0);
+  {
+    auto env = Env::Default();
+    uint64_t t;
+    env->GetCurrentTime(reinterpret_cast<int64_t*>(&t));
+    now = t;
+  }
+
+  BranchInfo info;
+  info.dbid = child_dbid;
+  info.object_path = destination.GetObjectPath();
+  info.bucket_name = destination.GetBucketName();
+  info.fork_file_number = fp.file_number;
+  info.fork_epoch = fp.epoch;
+  info.created_at = now;
+
+  if (st.ok()) {
+    st = CloudBranchUtil::WriteRefObject(provider, cfs->GetDestBucketName(),
+                                         cfs->GetDestObjectPath(), info,
+                                         base_fs);
+  }
+
+  // Update branch registry
+  if (st.ok()) {
+    std::vector<BranchInfo> branches;
+    CloudBranchUtil::ReadBranchRegistry(provider, cfs->GetDestBucketName(),
+                                        cfs->GetDestObjectPath(), &branches,
+                                        base_fs);
+    branches.push_back(info);
+    CloudBranchUtil::WriteBranchRegistry(provider, cfs->GetDestBucketName(),
+                                         cfs->GetDestObjectPath(), branches,
+                                         base_fs);
+  }
+
+  EnableFileDeletions();
+
+  if (st.ok()) {
+    *result = info;
+  }
+
+  Log(InfoLogLevel::INFO_LEVEL, GetOptions().info_log,
+      "CreateBranch to %s/%s: dbid=%s fork_file=%" PRIu64 " epoch=%s: %s",
+      destination.GetBucketName().c_str(), destination.GetObjectPath().c_str(),
+      child_dbid.c_str(), fp.file_number, fp.epoch.c_str(),
+      st.ToString().c_str());
+  return st;
+}
+
+Status DBCloudImpl::DetachBranch() {
+  auto* cfs =
+      static_cast<CloudFileSystemImpl*>(GetEnv()->GetFileSystem().get());
+  assert(cfs);
+  auto provider = cfs->GetStorageProvider();
+  auto& base_fs = cfs->GetBaseFileSystem();
+
+  auto parent_path = cfs->GetCloudManifest()->GetParentObjectPath();
+  if (parent_path.empty()) {
+    return Status::InvalidArgument("This database is not a branch");
+  }
+
+  DisableFileDeletions();
+
+  // Find all live SST files
+  std::vector<LiveFileMetaData> live_files;
+  GetLiveFilesMetaData(&live_files);
+
+  // Copy SSTs that are in the parent's path to our own path
+  Status st;
+  for (const auto& file : live_files) {
+    auto remapped_fname = cfs->RemapFilename(file.name);
+    auto dest_path = cfs->GetDestObjectPath() + "/" + remapped_fname;
+
+    // Check if the file exists in our dest bucket
+    auto exists =
+        provider->ExistsCloudObject(cfs->GetDestBucketName(), dest_path);
+    if (exists.ok()) continue;
+
+    // Try to copy from parent path
+    auto src_path = parent_path + "/" + remapped_fname;
+    st = provider->CopyCloudObject(cfs->GetDestBucketName(), src_path,
+                                   cfs->GetDestBucketName(), dest_path);
+    if (!st.ok() && !st.IsNotFound()) {
+      Log(InfoLogLevel::ERROR_LEVEL, GetOptions().info_log,
+          "DetachBranch: failed to copy %s -> %s: %s", src_path.c_str(),
+          dest_path.c_str(), st.ToString().c_str());
+      EnableFileDeletions();
+      return st;
+    }
+
+    // Also check fallback buckets
+    if (st.IsNotFound()) {
+      for (const auto& fb :
+           cfs->GetCloudFileSystemOptions().fallback_buckets) {
+        src_path = fb.GetObjectPath() + "/" + remapped_fname;
+        st = provider->CopyCloudObject(fb.GetBucketName(), src_path,
+                                       cfs->GetDestBucketName(), dest_path);
+        if (st.ok()) break;
+      }
+    }
+  }
+
+  // Delete the ref from the parent
+  std::string dbid;
+  st = GetDbIdentity(dbid);
+  if (st.ok()) {
+    // Try parent bucket (same as dest for typical setup)
+    CloudBranchUtil::DeleteRefObject(provider, cfs->GetDestBucketName(),
+                                     parent_path, dbid);
+  }
+
+  // Clear the parent ref in our CloudManifest
+  cfs->GetCloudManifest()->SetParentObjectPath("");
+
+  EnableFileDeletions();
+
+  Log(InfoLogLevel::INFO_LEVEL, GetOptions().info_log,
+      "DetachBranch from parent %s: %s", parent_path.c_str(),
+      st.ToString().c_str());
+  return st;
+}
+
+Status DBCloudImpl::ListBranches(std::vector<BranchInfo>* branches) {
+  auto* cfs =
+      static_cast<CloudFileSystemImpl*>(GetEnv()->GetFileSystem().get());
+  assert(cfs);
+  auto provider = cfs->GetStorageProvider();
+  auto& base_fs = cfs->GetBaseFileSystem();
+
+  return CloudBranchUtil::ReadBranchRegistry(provider, cfs->GetDestBucketName(),
+                                             cfs->GetDestObjectPath(), branches,
+                                             base_fs);
 }
 
 Status DBCloudImpl::CheckpointToCloud(const BucketOptions& destination,

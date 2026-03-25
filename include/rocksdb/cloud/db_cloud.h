@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,26 @@ struct ForkPoint {
   std::string epoch;
   uint64_t file_number;
   std::string cloud_manifest_cookie;
+};
+
+struct CreateBranchOptions {
+  // If true, flush memtable to SSTs before branching. Guarantees branch
+  // includes all data, but causes a brief write stall.
+  bool flush_memtable = false;
+  // When true and flush_memtable is false, trigger a synchronous WAL upload
+  // and server-side-copy the parent's WAL files to the child's path.
+  // Requires background_wal_sync_to_cloud on the parent.
+  // Ignored when flush_memtable is true.
+  bool include_wal = true;
+};
+
+struct BranchInfo {
+  std::string dbid;
+  std::string object_path;
+  std::string bucket_name;
+  uint64_t fork_file_number;
+  std::string fork_epoch;
+  uint64_t created_at;
 };
 
 //
@@ -68,6 +89,23 @@ class DBCloud : public StackableDB {
   // use it to create a zero-copy branch that shares the parent's SSTs
   // for file numbers below the fork point.
   virtual Status CaptureForkPoint(ForkPoint* result) = 0;
+
+  // Create a zero-copy branch of this database at the given destination.
+  // The branch shares the parent's SST files (via fallback_buckets) and
+  // optionally includes WAL files for complete data coverage.
+  // A ref object is written to the parent's path to protect referenced SSTs
+  // from purger deletion.
+  virtual Status CreateBranch(const BucketOptions& destination,
+                              const CreateBranchOptions& options,
+                              BranchInfo* result) = 0;
+
+  // Detach this database from its parent branch. Server-side-copies all
+  // referenced parent SSTs into this database's own path, removes the ref
+  // from the parent, and clears fallback_buckets.
+  virtual Status DetachBranch() = 0;
+
+  // List all child branches of this database.
+  virtual Status ListBranches(std::vector<BranchInfo>* branches) = 0;
 
   // ListColumnFamilies will open the DB specified by argument name
   // and return the list of all column families in that DB
