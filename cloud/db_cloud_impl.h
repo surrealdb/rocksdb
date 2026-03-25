@@ -31,6 +31,14 @@ class DBCloudImpl : public DBCloud {
 
   Status CaptureForkPoint(ForkPoint* result) override;
 
+  Status CreateBranch(const BucketOptions& destination,
+                      const CreateBranchOptions& options,
+                      BranchInfo* result) override;
+
+  Status DetachBranch() override;
+
+  Status ListBranches(std::vector<BranchInfo>* branches) override;
+
  protected:
   // The CloudFileSystem used by this open instance.
   CloudFileSystem* cfs_;

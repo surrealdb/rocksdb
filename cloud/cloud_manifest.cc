@@ -30,6 +30,7 @@ struct CorruptionReporter : public log::Reader::Reporter {
 enum class RecordTags : uint32_t {
   kPastEpoch = 1,
   kCurrentEpoch = 2,
+  kParentRef = 3,
 };
 
 }  // namespace
@@ -52,6 +53,7 @@ IOStatus CloudManifest::LoadFromLog(std::unique_ptr<SequentialFileReader> log,
   uint32_t expectedRecords = 0;
   uint32_t recordsRead = 0;
   std::string currentEpoch;
+  std::string parentObjectPath;
   std::vector<std::pair<uint64_t, std::string>> pastEpochs;
   while (reader.ReadRecord(&record, &scratch,
                            WALRecoveryMode::kAbsoluteConsistency) &&
@@ -65,7 +67,7 @@ IOStatus CloudManifest::LoadFromLog(std::unique_ptr<SequentialFileReader> log,
       if (!ok) {
         return IOStatus::Corruption("Corruption in cloud manifest header");
       }
-      if (formatVersion != kCurrentFormatVersion) {
+      if (formatVersion != kCurrentFormatVersion && formatVersion != 1) {
         return IOStatus::Corruption("Unknown cloud manifest format version");
       }
       headerRead = true;
@@ -95,6 +97,14 @@ IOStatus CloudManifest::LoadFromLog(std::unique_ptr<SequentialFileReader> log,
           }
           break;
         }
+        case static_cast<uint32_t>(RecordTags::kParentRef): {
+          Slice parent;
+          ok = GetLengthPrefixedSlice(&record, &parent);
+          if (ok) {
+            parentObjectPath = parent.ToString();
+          }
+          break;
+        }
         default:
           ok = false;
       }
@@ -112,8 +122,9 @@ IOStatus CloudManifest::LoadFromLog(std::unique_ptr<SequentialFileReader> log,
                       [](auto& e1, auto& e2) { return e1.first < e2.first; })) {
     return IOStatus::Corruption("Cloud manifest records not sorted");
   }
-  manifest->reset(
-      new CloudManifest(std::move(pastEpochs), std::move(currentEpoch)));
+  manifest->reset(new CloudManifest(std::move(pastEpochs),
+                                    std::move(currentEpoch),
+                                    std::move(parentObjectPath)));
   return status_to_io_status(std::move(status));
 }
 
@@ -126,7 +137,7 @@ IOStatus CloudManifest::CreateForEmptyDatabase(
 std::unique_ptr<CloudManifest> CloudManifest::clone() const {
   ReadLock lck(&mutex_);
   return std::unique_ptr<CloudManifest>(
-      new CloudManifest(pastEpochs_, currentEpoch_));
+      new CloudManifest(pastEpochs_, currentEpoch_, parent_object_path_));
 }
 
 // Serialization format is quite simple:
@@ -147,8 +158,12 @@ IOStatus CloudManifest::WriteToLog(
   ReadLock lck(&mutex_);
 
   // 1. write header
+  uint32_t num_records = static_cast<uint32_t>(pastEpochs_.size() + 1);
+  if (!parent_object_path_.empty()) {
+    num_records++;
+  }
   PutVarint32(&record, kCurrentFormatVersion);
-  PutVarint32(&record, static_cast<uint32_t>(pastEpochs_.size() + 1));
+  PutVarint32(&record, num_records);
   auto status = writer.AddRecord({}, record);
   if (!status.ok()) {
     return status;
@@ -170,11 +185,22 @@ IOStatus CloudManifest::WriteToLog(
   record.clear();
   PutVarint32(&record, static_cast<uint32_t>(RecordTags::kCurrentEpoch));
   PutLengthPrefixedSlice(&record, currentEpoch_);
-
   status = writer.AddRecord({}, record);
   if (!status.ok()) {
     return status;
   }
+
+  // 4. put parent ref if set
+  if (!parent_object_path_.empty()) {
+    record.clear();
+    PutVarint32(&record, static_cast<uint32_t>(RecordTags::kParentRef));
+    PutLengthPrefixedSlice(&record, parent_object_path_);
+    status = writer.AddRecord({}, record);
+    if (!status.ok()) {
+      return status;
+    }
+  }
+
   return writer.file()->Sync({}, true);
 }
 
@@ -239,7 +265,20 @@ std::string CloudManifest::ToString(bool include_past_epochs) {
     oss << "]\n";
   }
   oss << "Current Epoch: " << currentEpoch_;
+  if (!parent_object_path_.empty()) {
+    oss << "\nParent: " << parent_object_path_;
+  }
   return oss.str();
+}
+
+void CloudManifest::SetParentObjectPath(const std::string& path) {
+  WriteLock lck(&mutex_);
+  parent_object_path_ = path;
+}
+
+std::string CloudManifest::GetParentObjectPath() const {
+  ReadLock lck(&mutex_);
+  return parent_object_path_;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

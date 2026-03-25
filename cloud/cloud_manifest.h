@@ -63,11 +63,18 @@ class CloudManifest {
   std::string ToString(bool include_past_epochs=false);
   std::vector<std::pair<uint64_t, std::string>> TEST_GetPastEpochs() const;
 
+  // For zero-copy branching: the object path of the parent database whose
+  // SSTs this branch references via fallback_buckets.
+  void SetParentObjectPath(const std::string& path);
+  std::string GetParentObjectPath() const;
+
  private:
   CloudManifest(std::vector<std::pair<uint64_t, std::string>> pastEpochs,
-                std::string currentEpoch)
+                std::string currentEpoch,
+                std::string parentObjectPath = "")
       : pastEpochs_(std::move(pastEpochs)),
-        currentEpoch_(std::move(currentEpoch)) {}
+        currentEpoch_(std::move(currentEpoch)),
+        parent_object_path_(std::move(parentObjectPath)) {}
 
   mutable port::RWMutex mutex_;
 
@@ -76,8 +83,9 @@ class CloudManifest {
   // (exclusive) of an epoch
   std::vector<std::pair<uint64_t, std::string>> pastEpochs_;
   std::string currentEpoch_;
+  std::string parent_object_path_;
 
-  static constexpr uint32_t kCurrentFormatVersion = 1;
+  static constexpr uint32_t kCurrentFormatVersion = 2;
 };
 
 }  // namespace ROCKSDB_NAMESPACE

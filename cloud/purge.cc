@@ -5,6 +5,7 @@
 #include <chrono>
 #include <set>
 
+#include "cloud/cloud_branch.h"
 #include "cloud/db_cloud_impl.h"
 #include "cloud/filename.h"
 #include "cloud/manifest_reader.h"
@@ -140,6 +141,22 @@ IOStatus CloudFileSystemImpl::FindObsoleteFiles(
           const std::string& parent_path = dbid_list[db];
           live_files.insert(MakeTableFileName(parent_path, *it));
         }
+      }
+    }
+  }
+
+  // Step 3: check branch ref objects. For each db path, list /.refs/ and
+  // protect all SSTs with file_number < ref.fork_file_number.
+  for (auto iter = dbid_list.begin(); iter != dbid_list.end(); ++iter) {
+    std::vector<BranchInfo> refs;
+    auto ref_st = CloudBranchUtil::ListRefObjects(
+        GetStorageProvider(), bucket_name_prefix, iter->second, &refs,
+        base_fs_);
+    if (!ref_st.ok()) continue;
+
+    for (const auto& ref : refs) {
+      for (uint64_t fnum = 1; fnum < ref.fork_file_number; ++fnum) {
+        live_files.insert(MakeTableFileName(iter->second, fnum));
       }
     }
   }

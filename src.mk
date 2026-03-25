@@ -362,6 +362,7 @@ CLOUD_SOURCES =                                                 \
   cloud/cloud_scheduler.cc                                      \
   cloud/cloud_file_deletion_scheduler.cc                        \
   cloud/cloud_wal_controller.cc                                 \
+  cloud/cloud_branch.cc                                         \
   cloud/db_cloud_impl.cc                                        \
   cloud/cloud_optimistic_transaction_db_impl.cc                 \
   cloud/cloud_transaction_db_impl.cc                            \

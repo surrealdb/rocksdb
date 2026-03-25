@@ -8891,6 +8891,8 @@ using ROCKSDB_NAMESPACE::CloudOptimisticTransactionDB;
 using ROCKSDB_NAMESPACE::CloudTransactionDB;
 using ROCKSDB_NAMESPACE::DBCloud;
 using ROCKSDB_NAMESPACE::FileSystem;
+using ROCKSDB_NAMESPACE::BranchInfo;
+using ROCKSDB_NAMESPACE::CreateBranchOptions;
 using ROCKSDB_NAMESPACE::ForkPoint;
 
 struct rocksdb_cloud_fs_t {
@@ -9576,6 +9578,57 @@ void rocksdb_cloud_db_capture_fork_point(rocksdb_cloud_db_t* db,
   *cookie_out = strdup(fp.cloud_manifest_cookie.c_str());
 }
 
+void rocksdb_cloud_db_create_branch(rocksdb_cloud_db_t* db,
+                                    rocksdb_cloud_bucket_options_t* destination,
+                                    unsigned char flush_memtable,
+                                    unsigned char include_wal,
+                                    char** branch_dbid_out, char** errptr) {
+  ROCKSDB_NAMESPACE::CreateBranchOptions opts;
+  opts.flush_memtable = flush_memtable;
+  opts.include_wal = include_wal;
+  ROCKSDB_NAMESPACE::BranchInfo info;
+  auto st = db->rep->CreateBranch(destination->rep, opts, &info);
+  if (!st.ok()) {
+    SaveError(errptr, st);
+    return;
+  }
+  *branch_dbid_out = strdup(info.dbid.c_str());
+}
+
+void rocksdb_cloud_db_detach_branch(rocksdb_cloud_db_t* db, char** errptr) {
+  SaveError(errptr, db->rep->DetachBranch());
+}
+
+void rocksdb_cloud_db_list_branches(rocksdb_cloud_db_t* db, char*** dbids_out,
+                                    char*** paths_out, size_t* count,
+                                    char** errptr) {
+  std::vector<ROCKSDB_NAMESPACE::BranchInfo> branches;
+  auto st = db->rep->ListBranches(&branches);
+  if (!st.ok()) {
+    SaveError(errptr, st);
+    return;
+  }
+  *count = branches.size();
+  *dbids_out =
+      static_cast<char**>(malloc(branches.size() * sizeof(char*)));
+  *paths_out =
+      static_cast<char**>(malloc(branches.size() * sizeof(char*)));
+  for (size_t i = 0; i < branches.size(); i++) {
+    (*dbids_out)[i] = strdup(branches[i].dbid.c_str());
+    (*paths_out)[i] = strdup(branches[i].object_path.c_str());
+  }
+}
+
+void rocksdb_cloud_db_free_branch_list(char** dbids, char** paths,
+                                       size_t count) {
+  for (size_t i = 0; i < count; i++) {
+    free(dbids[i]);
+    free(paths[i]);
+  }
+  free(dbids);
+  free(paths);
+}
+
 char** rocksdb_cloud_db_list_column_families(const rocksdb_options_t* options,
                                              const char* name, size_t* lencfs,
                                              char** errptr) {
@@ -9677,6 +9730,27 @@ void rocksdb_cloud_otxn_db_capture_fork_point(rocksdb_cloud_otxn_db_t* db,
   *cookie_out = strdup(fp.cloud_manifest_cookie.c_str());
 }
 
+void rocksdb_cloud_otxn_db_create_branch(
+    rocksdb_cloud_otxn_db_t* otxn_db,
+    rocksdb_cloud_bucket_options_t* destination, unsigned char flush_memtable,
+    unsigned char include_wal, char** branch_dbid_out, char** errptr) {
+  ROCKSDB_NAMESPACE::CreateBranchOptions opts;
+  opts.flush_memtable = flush_memtable;
+  opts.include_wal = include_wal;
+  ROCKSDB_NAMESPACE::BranchInfo info;
+  auto st = otxn_db->rep->CreateBranch(destination->rep, opts, &info);
+  if (!st.ok()) {
+    SaveError(errptr, st);
+    return;
+  }
+  *branch_dbid_out = strdup(info.dbid.c_str());
+}
+
+void rocksdb_cloud_otxn_db_detach_branch(rocksdb_cloud_otxn_db_t* otxn_db,
+                                         char** errptr) {
+  SaveError(errptr, otxn_db->rep->DetachBranch());
+}
+
 // CloudTransactionDB
 
 rocksdb_cloud_txn_db_t* rocksdb_cloud_txn_db_open(
@@ -9762,6 +9836,27 @@ void rocksdb_cloud_txn_db_capture_fork_point(rocksdb_cloud_txn_db_t* db,
   *epoch_out = strdup(fp.epoch.c_str());
   *file_number_out = fp.file_number;
   *cookie_out = strdup(fp.cloud_manifest_cookie.c_str());
+}
+
+void rocksdb_cloud_txn_db_create_branch(
+    rocksdb_cloud_txn_db_t* txn_db,
+    rocksdb_cloud_bucket_options_t* destination, unsigned char flush_memtable,
+    unsigned char include_wal, char** branch_dbid_out, char** errptr) {
+  ROCKSDB_NAMESPACE::CreateBranchOptions opts;
+  opts.flush_memtable = flush_memtable;
+  opts.include_wal = include_wal;
+  ROCKSDB_NAMESPACE::BranchInfo info;
+  auto st = txn_db->rep->CreateBranch(destination->rep, opts, &info);
+  if (!st.ok()) {
+    SaveError(errptr, st);
+    return;
+  }
+  *branch_dbid_out = strdup(info.dbid.c_str());
+}
+
+void rocksdb_cloud_txn_db_detach_branch(rocksdb_cloud_txn_db_t* txn_db,
+                                        char** errptr) {
+  SaveError(errptr, txn_db->rep->DetachBranch());
 }
 
 #endif  // ROCKSDB_CLOUD

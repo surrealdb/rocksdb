@@ -5,6 +5,7 @@
 #include "cloud/cloud_wal_controller.h"
 
 #include <cinttypes>
+#include <set>
 
 #include "cloud/cloud_scheduler.h"
 #include "cloud/filename.h"
@@ -242,14 +243,40 @@ void BackgroundWALUploader::DoUpload(void* /*arg*/) {
       base_fs->GetChildren(local_dbname_, IOOptions(), &children, nullptr);
   if (!st.ok()) return;
 
+  // Build a set of local WAL filenames for cleanup comparison
+  std::set<std::string> local_wal_files;
   for (const auto& child : children) {
     if (!IsWalFile(child)) continue;
+    local_wal_files.insert(child);
     auto local_path = local_dbname_ + "/" + child;
     auto s = UploadWALFile(local_path);
     if (!s.ok()) {
       Log(InfoLogLevel::WARN_LEVEL, cfs_->GetLogger(),
           "[cloud_wal] Background WAL upload failed for %s: %s",
           local_path.c_str(), s.ToString().c_str());
+    }
+  }
+
+  // Clean up S3 WAL objects whose local files no longer exist (flushed to SSTs)
+  if (cfs_->HasDestBucket()) {
+    auto provider = cfs_->GetStorageProvider();
+    std::string wal_prefix = cfs_->GetDestObjectPath() + "/wal/";
+    std::vector<std::string> cloud_wals;
+    auto ls = provider->ListCloudObjects(cfs_->GetDestBucketName(),
+                                         wal_prefix, &cloud_wals);
+    if (ls.ok()) {
+      for (const auto& cloud_wal : cloud_wals) {
+        if (!IsWalFile(cloud_wal)) continue;
+        if (local_wal_files.find(cloud_wal) == local_wal_files.end()) {
+          auto cloud_path = wal_prefix + cloud_wal;
+          auto ds = provider->DeleteCloudObject(cfs_->GetDestBucketName(),
+                                                cloud_path);
+          if (ds.ok()) {
+            Log(InfoLogLevel::INFO_LEVEL, cfs_->GetLogger(),
+                "[cloud_wal] Deleted obsolete S3 WAL %s", cloud_path.c_str());
+          }
+        }
+      }
     }
   }
 }

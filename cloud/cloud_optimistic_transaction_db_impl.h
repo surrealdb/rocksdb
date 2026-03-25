@@ -32,6 +32,14 @@ class CloudOptimisticTransactionDBImpl
 
   Status CaptureForkPoint(ForkPoint* result) override;
 
+  Status CreateBranch(const BucketOptions& destination,
+                      const CreateBranchOptions& options,
+                      BranchInfo* result) override;
+
+  Status DetachBranch() override;
+
+  Status ListBranches(std::vector<BranchInfo>* branches) override;
+
  private:
   DBCloudImpl* db_cloud_;
   OptimisticTransactionDBImpl* txn_db_;
