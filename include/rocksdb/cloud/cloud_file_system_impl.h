@@ -4,7 +4,9 @@
 #pragma once
 #include <atomic>
 #include <condition_variable>
+#include <future>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <thread>
 
@@ -428,6 +430,8 @@ class CloudFileSystemImpl : public CloudFileSystem {
     info_log_ = std::move(l);
   }
 
+  void SetOpenPhaseActive(bool active) { open_phase_active_.store(active); }
+
   void OnLocalSstFileCreated(const std::string& fname,
                              uint64_t size) override;
 
@@ -466,6 +470,17 @@ class CloudFileSystemImpl : public CloudFileSystem {
   // This runs only in tests when we want to disable cloud manifest
   // functionality
   bool test_disable_cloud_manifest_{false};
+
+  // Parallel manifest bootstrap: when SanitizeLocalDirectory triggers a
+  // reinit, it prefetches the CLOUDMANIFEST in parallel with the IDENTITY
+  // download. LoadCloudManifest then reuses the prefetched result instead of
+  // re-downloading.
+  bool cloud_manifest_prefetched_{false};
+  std::optional<IOStatus> prefetched_cloud_manifest_status_;
+
+  // When true, GetChildren skips cloud listing (set during DB::Open when
+  // skip_cloud_listing_on_open is enabled).
+  std::atomic<bool> open_phase_active_{false};
 
   // scratch space in local dir
   static constexpr const char* SCRATCH_LOCAL_DIR = "/tmp";

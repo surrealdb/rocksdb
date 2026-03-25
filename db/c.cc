@@ -4538,6 +4538,15 @@ int rocksdb_options_get_max_file_opening_threads(rocksdb_options_t* opt) {
   return opt->rep.max_file_opening_threads;
 }
 
+void rocksdb_options_set_initial_table_load_limit(rocksdb_options_t* opt,
+                                                  int n) {
+  opt->rep.initial_table_load_limit = n;
+}
+
+int rocksdb_options_get_initial_table_load_limit(rocksdb_options_t* opt) {
+  return opt->rep.initial_table_load_limit;
+}
+
 void rocksdb_options_set_max_total_wal_size(rocksdb_options_t* opt,
                                             uint64_t n) {
   opt->rep.max_total_wal_size = n;
@@ -9071,6 +9080,26 @@ void rocksdb_cloud_fs_options_set_skip_cloud_files_in_getchildren(
 unsigned char rocksdb_cloud_fs_options_get_skip_cloud_files_in_getchildren(
     rocksdb_cloud_fs_options_t* opts) {
   return opts->rep.skip_cloud_files_in_getchildren;
+}
+
+void rocksdb_cloud_fs_options_set_skip_cloud_listing_on_open(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.skip_cloud_listing_on_open = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_skip_cloud_listing_on_open(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.skip_cloud_listing_on_open;
+}
+
+void rocksdb_cloud_fs_options_set_warm_connection_pool_size(
+    rocksdb_cloud_fs_options_t* opts, int val) {
+  opts->rep.warm_connection_pool_size = val;
+}
+
+int rocksdb_cloud_fs_options_get_warm_connection_pool_size(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.warm_connection_pool_size;
 }
 
 void rocksdb_cloud_fs_options_set_use_direct_io_for_cloud_download(

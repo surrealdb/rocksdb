@@ -467,7 +467,10 @@ IOStatus CloudFileSystemImpl::GetChildren(const std::string& path,
   result->clear();
 
   IOStatus st;
-  if (!cloud_fs_options.skip_cloud_files_in_getchildren) {
+  bool skip_cloud = cloud_fs_options.skip_cloud_files_in_getchildren ||
+                    (cloud_fs_options.skip_cloud_listing_on_open &&
+                     open_phase_active_.load());
+  if (!skip_cloud) {
     // Fetch the list of children from the cloud
     st = ListCloudObjects(path, result);
     if (!st.ok()) {
@@ -1769,6 +1772,14 @@ IOStatus CloudFileSystemImpl::SanitizeLocalDirectory(
       "[cloud_fs_impl] SanitizeDirectory dest_equal_src = %d",
       SrcMatchesDest());
 
+  // Prefetch CLOUDMANIFEST in parallel with the IDENTITY download below.
+  // FetchCloudManifest only accesses cloud_fs_options (immutable at this
+  // point) and the storage provider, so it is safe to run concurrently
+  // with the IDENTITY download which writes to a different local file.
+  auto cm_future = std::async(std::launch::async, [this, &local_name]() {
+    return FetchCloudManifest(local_name);
+  });
+
   bool got_identity_from_dest = false, got_identity_from_src = false;
 
   // Download IDENTITY, first try destination, then source
@@ -1779,6 +1790,7 @@ IOStatus CloudFileSystemImpl::SanitizeLocalDirectory(
         IdentityFileName(local_name));
     if (!st.ok() && !st.IsNotFound()) {
       // If there was an error and it's not IsNotFound() we need to bail
+      cm_future.wait();
       return st;
     }
     got_identity_from_dest = st.ok();
@@ -1790,10 +1802,16 @@ IOStatus CloudFileSystemImpl::SanitizeLocalDirectory(
         IdentityFileName(local_name));
     if (!st.ok() && !st.IsNotFound()) {
       // If there was an error and it's not IsNotFound() we need to bail
+      cm_future.wait();
       return st;
     }
     got_identity_from_src = st.ok();
   }
+
+  // Collect the prefetched CLOUDMANIFEST result so LoadCloudManifest can
+  // skip re-downloading it.
+  prefetched_cloud_manifest_status_ = cm_future.get();
+  cloud_manifest_prefetched_ = true;
 
   if (!got_identity_from_src && !got_identity_from_dest) {
     // There isn't a valid db in either the src or dest bucket.
@@ -1850,6 +1868,15 @@ IOStatus CloudFileSystemImpl::SanitizeLocalDirectory(
 
 IOStatus CloudFileSystemImpl::FetchCloudManifest(
     const std::string& local_dbname) {
+  if (cloud_manifest_prefetched_) {
+    cloud_manifest_prefetched_ = false;
+    IOStatus st = std::move(*prefetched_cloud_manifest_status_);
+    prefetched_cloud_manifest_status_.reset();
+    Log(InfoLogLevel::INFO_LEVEL, info_log_,
+        "[cloud_fs_impl] FetchCloudManifest: using prefetched result: %s",
+        st.ToString().c_str());
+    return st;
+  }
   return FetchCloudManifest(local_dbname, cloud_fs_options.cookie_on_open);
 }
 

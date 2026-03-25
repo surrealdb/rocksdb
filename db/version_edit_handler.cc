@@ -566,7 +566,8 @@ Status VersionEditHandler::LoadTables(ColumnFamilyData* cfd,
       cfd->internal_stats(),
       version_set_->db_options_->max_file_opening_threads,
       prefetch_index_and_filter_in_cache, is_initial_load, moptions,
-      MaxFileSizeForL0MetaPin(moptions), read_options_);
+      MaxFileSizeForL0MetaPin(moptions), read_options_,
+      version_set_->db_options_->initial_table_load_limit);
   if ((s.IsPathNotFound() || s.IsCorruption()) && no_error_if_files_missing_) {
     s = Status::OK();
   }

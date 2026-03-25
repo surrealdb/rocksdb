@@ -42,6 +42,8 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   copts.skip_dbid_verification = false;
   copts.resync_on_open = false;
   copts.skip_cloud_files_in_getchildren = false;
+  copts.skip_cloud_listing_on_open = false;
+  copts.warm_connection_pool_size = 0;
   copts.constant_sst_file_size_in_sst_file_manager = 100;
   copts.run_purger = false;
   copts.purger_periodicity_millis = 101;
@@ -56,6 +58,8 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   ASSERT_FALSE(copy.skip_dbid_verification);
   ASSERT_FALSE(copy.resync_on_open);
   ASSERT_FALSE(copy.skip_cloud_files_in_getchildren);
+  ASSERT_FALSE(copy.skip_cloud_listing_on_open);
+  ASSERT_EQ(copy.warm_connection_pool_size, 0);
   ASSERT_FALSE(copy.run_purger);
   ASSERT_EQ(copy.constant_sst_file_size_in_sst_file_manager, 100);
   ASSERT_EQ(copy.purger_periodicity_millis, 101);
@@ -68,6 +72,8 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   copts.skip_dbid_verification = true;
   copts.resync_on_open = true;
   copts.skip_cloud_files_in_getchildren = true;
+  copts.skip_cloud_listing_on_open = true;
+  copts.warm_connection_pool_size = 4;
   copts.constant_sst_file_size_in_sst_file_manager = 200;
   copts.run_purger = true;
   copts.purger_periodicity_millis = 201;
@@ -81,6 +87,8 @@ TEST(CloudFileSystemTest, ConfigureOptions) {
   ASSERT_TRUE(copy.skip_dbid_verification);
   ASSERT_TRUE(copy.resync_on_open);
   ASSERT_TRUE(copy.skip_cloud_files_in_getchildren);
+  ASSERT_TRUE(copy.skip_cloud_listing_on_open);
+  ASSERT_EQ(copy.warm_connection_pool_size, 4);
   ASSERT_TRUE(copy.run_purger);
   ASSERT_EQ(copy.constant_sst_file_size_in_sst_file_manager, 200);
   ASSERT_EQ(copy.purger_periodicity_millis, 201);
