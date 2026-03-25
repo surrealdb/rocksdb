@@ -220,14 +220,9 @@ Status DBCloud::Open(const Options& opt, const std::string& local_dbname,
         local_dbname, cfs->GetCloudFileSystemOptions().new_cookie_on_open);
   }
 
-  // now that the database is opened, all file sizes have been verified and we
-  // no longer need to verify file sizes for each file that we open. Note that
-  // this might have a data race with background compaction, but it's not a big
-  // deal, since it's a boolean and it does not impact correctness in any way.
-  if (cfs->GetCloudFileSystemOptions().validate_filesize) {
-    *const_cast<bool*>(&cfs->GetCloudFileSystemOptions().validate_filesize) =
-        false;
-  }
+  // Now that the database is opened, all file sizes have been verified and we
+  // no longer need to verify file sizes for each file that we open.
+  cfs_impl->GetMutableCloudFileSystemOptions().validate_filesize = false;
 
   if (st.ok()) {
     DBCloudImpl* cloud = new DBCloudImpl(db.release(), std::move(local_env));
@@ -466,38 +461,48 @@ Status DBCloudImpl::CreateBranch(const BucketOptions& destination,
         if (!IsWalFile(child)) continue;
         auto local_path = GetName() + "/" + child;
         auto cloud_path = cfs->GetDestObjectPath() + "/wal/" + child;
-        provider->PutCloudObject(local_path, cfs->GetDestBucketName(),
-                                 cloud_path);
+        auto ws = provider->PutCloudObject(local_path,
+                                           cfs->GetDestBucketName(),
+                                           cloud_path);
+        if (!ws.ok()) {
+          st = ws;
+          break;
+        }
       }
+    } else {
+      st = ls;
     }
 
     // Server-side copy WAL files from parent path to child path
-    std::string wal_prefix = cfs->GetDestObjectPath() + "/wal/";
-    std::vector<std::string> wal_objects;
-    ls = provider->ListCloudObjects(cfs->GetDestBucketName(), wal_prefix,
-                                    &wal_objects);
-    if (ls.ok()) {
-      for (const auto& wal_obj : wal_objects) {
-        if (!IsWalFile(wal_obj)) continue;
-        auto src_path = wal_prefix + wal_obj;
-        auto dst_path = destination.GetObjectPath() + "/wal/" + wal_obj;
-        provider->CopyCloudObject(cfs->GetDestBucketName(), src_path,
-                                  destination.GetBucketName(), dst_path);
+    if (st.ok()) {
+      std::string wal_prefix = cfs->GetDestObjectPath() + "/wal/";
+      std::vector<std::string> wal_objects;
+      ls = provider->ListCloudObjects(cfs->GetDestBucketName(), wal_prefix,
+                                      &wal_objects);
+      if (ls.ok()) {
+        for (const auto& wal_obj : wal_objects) {
+          if (!IsWalFile(wal_obj)) continue;
+          auto src_path = wal_prefix + wal_obj;
+          auto dst_path = destination.GetObjectPath() + "/wal/" + wal_obj;
+          auto ws = provider->CopyCloudObject(cfs->GetDestBucketName(),
+                                              src_path,
+                                              destination.GetBucketName(),
+                                              dst_path);
+          if (!ws.ok()) {
+            st = ws;
+            break;
+          }
+        }
+      } else if (!ls.IsNotFound()) {
+        st = ls;
       }
     }
   }
 
   // Write ref object in parent's path
-  auto now = static_cast<uint64_t>(
-      Env::Default()->GetCurrentTime(nullptr).ok()
-          ? 0
-          : 0);
-  {
-    auto env = Env::Default();
-    uint64_t t;
-    env->GetCurrentTime(reinterpret_cast<int64_t*>(&t));
-    now = t;
-  }
+  int64_t now_signed = 0;
+  Env::Default()->GetCurrentTime(&now_signed).PermitUncheckedError();
+  auto now = static_cast<uint64_t>(now_signed);
 
   BranchInfo info;
   info.dbid = child_dbid;
@@ -516,13 +521,23 @@ Status DBCloudImpl::CreateBranch(const BucketOptions& destination,
   // Update branch registry
   if (st.ok()) {
     std::vector<BranchInfo> branches;
-    CloudBranchUtil::ReadBranchRegistry(provider, cfs->GetDestBucketName(),
-                                        cfs->GetDestObjectPath(), &branches,
-                                        base_fs);
-    branches.push_back(info);
-    CloudBranchUtil::WriteBranchRegistry(provider, cfs->GetDestBucketName(),
-                                         cfs->GetDestObjectPath(), branches,
-                                         base_fs);
+    auto rs = CloudBranchUtil::ReadBranchRegistry(
+        provider, cfs->GetDestBucketName(), cfs->GetDestObjectPath(),
+        &branches, base_fs);
+    if (!rs.ok() && !rs.IsNotFound()) {
+      st = rs;
+    } else {
+      branches.push_back(info);
+      rs = CloudBranchUtil::WriteBranchRegistry(
+          provider, cfs->GetDestBucketName(), cfs->GetDestObjectPath(),
+          branches, base_fs);
+      if (!rs.ok()) {
+        Log(InfoLogLevel::ERROR_LEVEL, GetOptions().info_log,
+            "CreateBranch: failed to write branch registry: %s",
+            rs.ToString().c_str());
+        st = rs;
+      }
+    }
   }
 
   EnableFileDeletions();
@@ -544,7 +559,6 @@ Status DBCloudImpl::DetachBranch() {
       static_cast<CloudFileSystemImpl*>(GetEnv()->GetFileSystem().get());
   assert(cfs);
   auto provider = cfs->GetStorageProvider();
-  auto& base_fs = cfs->GetBaseFileSystem();
 
   auto parent_path = cfs->GetCloudManifest()->GetParentObjectPath();
   if (parent_path.empty()) {
@@ -601,8 +615,20 @@ Status DBCloudImpl::DetachBranch() {
                                      parent_path, dbid);
   }
 
-  // Clear the parent ref in our CloudManifest
+  // Clear the parent ref in our CloudManifest and persist to cloud
   cfs->GetCloudManifest()->SetParentObjectPath("");
+  if (st.ok()) {
+    auto& opts = cfs->GetCloudFileSystemOptions();
+    auto cookie = opts.new_cookie_on_open.empty() ? opts.cookie_on_open
+                                                   : opts.new_cookie_on_open;
+    auto us = cfs->UploadCloudManifest(GetName(), cookie);
+    if (!us.ok()) {
+      Log(InfoLogLevel::ERROR_LEVEL, GetOptions().info_log,
+          "DetachBranch: failed to persist CloudManifest: %s",
+          us.ToString().c_str());
+      st = us;
+    }
+  }
 
   EnableFileDeletions();
 

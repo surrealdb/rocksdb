@@ -387,8 +387,11 @@ class CloudFileSystemImpl : public CloudFileSystem {
       const std::vector<std::string>& active_cookies) override;
 
  public:
-  // returns the options used to create this object
   const CloudFileSystemOptions& GetCloudFileSystemOptions() const override {
+    return cloud_fs_options;
+  }
+
+  CloudFileSystemOptions& GetMutableCloudFileSystemOptions() {
     return cloud_fs_options;
   }
 
