@@ -21,17 +21,21 @@ LocalSstCache::LocalSstCache(uint64_t max_size,
       logger_(std::move(logger)) {}
 
 void LocalSstCache::Add(const std::string& fname, uint64_t size) {
-  std::lock_guard<std::mutex> lk(mutex_);
-  auto it = entries_.find(fname);
-  if (it != entries_.end()) {
-    total_size_ -= it->second.size;
-    lru_list_.erase(it->second.lru_iter);
-    entries_.erase(it);
+  std::vector<std::pair<std::string, uint64_t>> victims;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    auto it = entries_.find(fname);
+    if (it != entries_.end()) {
+      total_size_ -= it->second.size;
+      lru_list_.erase(it->second.lru_iter);
+      entries_.erase(it);
+    }
+    lru_list_.push_front(fname);
+    entries_[fname] = {size, lru_list_.begin()};
+    total_size_ += size;
+    victims = CollectEvictionVictims();
   }
-  lru_list_.push_front(fname);
-  entries_[fname] = {size, lru_list_.begin()};
-  total_size_ += size;
-  MaybeEvict();
+  DeleteEvictedFiles(victims);
 }
 
 void LocalSstCache::Touch(const std::string& fname) {
@@ -96,21 +100,29 @@ void LocalSstCache::SeedFromDirectory(const std::string& dbname) {
               return a.mtime < b.mtime;
             });
 
-  std::lock_guard<std::mutex> lk(mutex_);
-  for (const auto& fi : sst_files) {
-    if (entries_.find(fi.path) != entries_.end()) {
-      continue;
+  std::vector<std::pair<std::string, uint64_t>> victims;
+  size_t num_entries;
+  uint64_t total;
+  {
+    std::lock_guard<std::mutex> lk(mutex_);
+    for (const auto& fi : sst_files) {
+      if (entries_.find(fi.path) != entries_.end()) {
+        continue;
+      }
+      lru_list_.push_front(fi.path);
+      entries_[fi.path] = {fi.size, lru_list_.begin()};
+      total_size_ += fi.size;
     }
-    lru_list_.push_front(fi.path);
-    entries_[fi.path] = {fi.size, lru_list_.begin()};
-    total_size_ += fi.size;
+    victims = CollectEvictionVictims();
+    num_entries = entries_.size();
+    total = total_size_;
   }
-  MaybeEvict();
+  DeleteEvictedFiles(victims);
 
   Log(InfoLogLevel::INFO_LEVEL, logger_.get(),
       "[LocalSstCache] Seeded with %zu files, total %" PRIu64
       " bytes, limit %" PRIu64 " bytes",
-      entries_.size(), total_size_, max_size_);
+      num_entries, total, max_size_);
 }
 
 uint64_t LocalSstCache::TotalSize() const {
@@ -123,8 +135,9 @@ size_t LocalSstCache::NumEntries() const {
   return entries_.size();
 }
 
-void LocalSstCache::MaybeEvict() {
-  const IOOptions io_opts;
+std::vector<std::pair<std::string, uint64_t>>
+LocalSstCache::CollectEvictionVictims() {
+  std::vector<std::pair<std::string, uint64_t>> victims;
   while (total_size_ > max_size_ && !lru_list_.empty()) {
     const auto& victim = lru_list_.back();
     auto it = entries_.find(victim);
@@ -132,15 +145,22 @@ void LocalSstCache::MaybeEvict() {
       lru_list_.pop_back();
       continue;
     }
-
-    auto st = base_fs_->DeleteFile(victim, io_opts, nullptr);
-    Log(InfoLogLevel::DEBUG_LEVEL, logger_.get(),
-        "[LocalSstCache] Evicted %s (%" PRIu64 " bytes): %s", victim.c_str(),
-        it->second.size, st.ToString().c_str());
-
+    victims.emplace_back(victim, it->second.size);
     total_size_ -= it->second.size;
     entries_.erase(it);
     lru_list_.pop_back();
+  }
+  return victims;
+}
+
+void LocalSstCache::DeleteEvictedFiles(
+    const std::vector<std::pair<std::string, uint64_t>>& victims) {
+  const IOOptions io_opts;
+  for (const auto& victim : victims) {
+    auto st = base_fs_->DeleteFile(victim.first, io_opts, nullptr);
+    Log(InfoLogLevel::DEBUG_LEVEL, logger_.get(),
+        "[LocalSstCache] Evicted %s (%" PRIu64 " bytes): %s",
+        victim.first.c_str(), victim.second, st.ToString().c_str());
   }
 }
 
