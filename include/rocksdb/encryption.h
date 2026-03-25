@@ -4,6 +4,8 @@
 #pragma once
 #ifdef OPENSSL
 
+#include <openssl/crypto.h>
+
 #include <memory>
 #include <string>
 
@@ -43,6 +45,15 @@ struct FileEncryptionInfo {
   EncryptionMethod method = EncryptionMethod::kUnknown;
   std::string key;
   std::string iv;
+
+  ~FileEncryptionInfo() {
+    if (!key.empty()) {
+      OPENSSL_cleanse(key.data(), key.size());
+    }
+    if (!iv.empty()) {
+      OPENSSL_cleanse(iv.data(), iv.size());
+    }
+  }
 };
 
 // Interface to manage encryption keys for files. KeyManagedEncryptedEnv
