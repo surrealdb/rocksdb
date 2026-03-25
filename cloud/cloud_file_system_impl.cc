@@ -1829,7 +1829,9 @@ IOStatus CloudFileSystemImpl::SanitizeLocalDirectory(
           "[cloud_fs_impl] WAL recovery from cloud failed: %s",
           wal_st.ToString().c_str());
     }
-    wal_controller_->StartBackgroundUploader(local_name);
+    if (!read_only) {
+      wal_controller_->StartBackgroundUploader(local_name);
+    }
   }
 
   return IOStatus::OK();
