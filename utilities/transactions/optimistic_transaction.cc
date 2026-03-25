@@ -201,6 +201,16 @@ Status OptimisticTransaction::Merge(ColumnFamilyHandle* column_family,
   });
 }
 
+Status OptimisticTransaction::Merge(ColumnFamilyHandle* column_family,
+                                    const SliceParts& key,
+                                    const SliceParts& value,
+                                    const bool assume_tracked) {
+  const bool do_validate = !assume_tracked;
+  return Operate(column_family, key, do_validate, assume_tracked, [&]() {
+    return GetBatchForWrite()->Merge(column_family, key, value);
+  });
+}
+
 Status OptimisticTransaction::MaybeStampWriteBatchTimestamps() {
   WriteBatchWithIndex* wbwi = GetWriteBatch();
   assert(wbwi);
@@ -219,9 +229,9 @@ Status OptimisticTransaction::MaybeStampWriteBatchTimestamps() {
   EncodeFixed64(commit_ts_buf, commit_timestamp_);
   Slice commit_ts(commit_ts_buf, sizeof(commit_ts_buf));
 
+  auto cf_id_to_ts_sz = wb->GetColumnFamilyToTimestampSize();
   return wb->UpdateTimestamps(
-      commit_ts, [wb, wbwi, this](uint32_t cf) -> size_t {
-        auto cf_id_to_ts_sz = wb->GetColumnFamilyToTimestampSize();
+      commit_ts, [&cf_id_to_ts_sz, wbwi, this](uint32_t cf) -> size_t {
         auto iter = cf_id_to_ts_sz.find(cf);
         if (iter != cf_id_to_ts_sz.end()) {
           return iter->second;

@@ -76,6 +76,9 @@ class OptimisticTransaction : public TransactionBaseImpl {
   using TransactionBaseImpl::Merge;
   Status Merge(ColumnFamilyHandle* column_family, const Slice& key,
                const Slice& value, const bool assume_tracked = false) override;
+  Status Merge(ColumnFamilyHandle* column_family, const SliceParts& key,
+               const SliceParts& value,
+               const bool assume_tracked = false);
 
  protected:
   Status TryLock(ColumnFamilyHandle* column_family, const Slice& key,
