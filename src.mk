@@ -386,7 +386,8 @@ CLOUD_TEST_SOURCES =                                            \
   cloud/cloud_transaction_db_test.cc                            \
   cloud/cloud_scheduler_test.cc                                 \
   cloud/local_sst_cache_test.cc                                 \
-  cloud/replication_test.cc                                      \
+  cloud/replication_test.cc                                     \
+  cloud/gcp/gcp_db_cloud_test.cc                                \
 
 WITH_FAISS_LIB_SOURCES = \
   utilities/secondary_index/faiss_ivf_index.cc                  \
