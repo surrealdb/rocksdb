@@ -129,6 +129,10 @@ class CloudWALController {
   // Download WAL files from cloud during recovery.
   IOStatus RecoverWALFromCloud(const std::string& local_dbname);
 
+  // Consume WAL records from Kafka and write them into local_dbname
+  // so that DB::Recover() can replay them. No-op if Kafka is not configured.
+  IOStatus RecoverWALFromKafka(const std::string& local_dbname);
+
   bool IsActive() const { return active_; }
 
  private:

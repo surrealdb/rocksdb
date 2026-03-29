@@ -167,3 +167,15 @@ Several optimizations to reduce cloud DB open latency:
   controls how many SST files have their metadata loaded during
   `DB::Open`. Set to 0 to load all tables, eliminating first-query
   latency spikes.
+
+## Kafka WAL recovery on startup
+
+Wired up the `KafkaWALTailer` so that WAL records published to Kafka are
+consumed and written to the local DB directory during
+`SanitizeLocalDirectory`, before `DB::Recover()` replays them. This ensures
+unflushed data is not lost when a node restarts with Kafka WAL sync enabled.
+
+The recovery runs after cloud WAL download and before the background WAL
+uploader starts. It is a no-op when Kafka sync is not configured
+(`kafka_wal_sync_mode == kNone`) or when RocksDB is built without Kafka
+support.

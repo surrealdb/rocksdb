@@ -1850,13 +1850,19 @@ IOStatus CloudFileSystemImpl::SanitizeLocalDirectory(
     local_sst_cache_->SeedFromDirectory(local_name);
   }
 
-  // Recover WAL files from cloud if background WAL sync was enabled
+  // Recover WAL files from cloud and/or Kafka
   if (wal_controller_) {
     auto wal_st = wal_controller_->RecoverWALFromCloud(local_name);
     if (!wal_st.ok()) {
       Log(InfoLogLevel::WARN_LEVEL, info_log_,
           "[cloud_fs_impl] WAL recovery from cloud failed: %s",
           wal_st.ToString().c_str());
+    }
+    auto kafka_st = wal_controller_->RecoverWALFromKafka(local_name);
+    if (!kafka_st.ok()) {
+      Log(InfoLogLevel::WARN_LEVEL, info_log_,
+          "[cloud_fs_impl] WAL recovery from Kafka failed: %s",
+          kafka_st.ToString().c_str());
     }
     if (!read_only) {
       wal_controller_->StartBackgroundUploader(local_name);

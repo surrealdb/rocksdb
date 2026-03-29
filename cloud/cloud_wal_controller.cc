@@ -426,6 +426,38 @@ IOStatus CloudWALController::RecoverWALFromCloud(
   return IOStatus::OK();
 }
 
+IOStatus CloudWALController::RecoverWALFromKafka(
+    const std::string& local_dbname) {
+#ifdef USE_KAFKA
+  if (cloud_opts_.kafka_wal_sync_mode == WalKafkaSyncMode::kNone) {
+    return IOStatus::OK();
+  }
+
+  std::string topic = cloud_opts_.kafka_topic_prefix + "." +
+                      cloud_opts_.dest_bucket.GetBucketName();
+
+  Log(InfoLogLevel::INFO_LEVEL, info_log_,
+      "[cloud_wal] Recovering WAL from Kafka topic %s into %s",
+      topic.c_str(), local_dbname.c_str());
+
+  KafkaWALTailer tailer(cloud_opts_.kafka_bootstrap_servers, topic,
+                        local_dbname, base_fs_, info_log_);
+  auto st = tailer.ReplayAll();
+  if (!st.ok()) {
+    Log(InfoLogLevel::ERROR_LEVEL, info_log_,
+        "[cloud_wal] Kafka WAL recovery failed: %s", st.ToString().c_str());
+    return st;
+  }
+
+  Log(InfoLogLevel::INFO_LEVEL, info_log_,
+      "[cloud_wal] Kafka WAL recovery complete for topic %s", topic.c_str());
+  return IOStatus::OK();
+#else
+  (void)local_dbname;
+  return IOStatus::OK();
+#endif
+}
+
 }  // namespace ROCKSDB_NAMESPACE
 
 #endif  // ROCKSDB_LITE
