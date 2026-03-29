@@ -1795,6 +1795,21 @@ struct DBOptions {
   // Default 100ms
   uint64_t follower_catchup_retry_wait_ms = 100;
 
+#ifdef ROCKSDB_CLOUD
+  // WAL sources for read replica catch-up. Combine with bitwise OR.
+  // kReadReplicaWALLocal:  scan local WAL directory (default, same as
+  //                        secondary).
+  // kReadReplicaWALCloud:  download WAL from cloud object storage.
+  // kReadReplicaWALKafka:  consume WAL from Kafka.
+  static constexpr uint32_t kReadReplicaWALLocal = 0x1;
+  static constexpr uint32_t kReadReplicaWALCloud = 0x2;
+  static constexpr uint32_t kReadReplicaWALKafka = 0x4;
+
+  // Which WAL sources to use for read replica catch-up.
+  // Default: kReadReplicaWALLocal (local only, same as secondary)
+  uint32_t read_replica_wal_sources = kReadReplicaWALLocal;
+#endif  // ROCKSDB_CLOUD
+
   // When DB files other than SST, blob and WAL files are created, use this
   // filesystem temperature. (See also `wal_write_temperature` and various
   // `*_temperature` CF options.) When not `kUnknown`, this overrides any

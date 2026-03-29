@@ -1288,6 +1288,71 @@ rocksdb_t* rocksdb_open_as_secondary(const rocksdb_options_t* options,
   return result;
 }
 
+#ifdef ROCKSDB_CLOUD
+rocksdb_t* rocksdb_open_as_read_replica(const rocksdb_options_t* options,
+                                        const char* name,
+                                        const char* local_replica_path,
+                                        char** errptr) {
+  std::unique_ptr<DB> dbptr;
+  if (SaveError(errptr, DB::OpenAsReadReplica(options->rep, std::string(name),
+                                              std::string(local_replica_path),
+                                              &dbptr))) {
+    return nullptr;
+  }
+  rocksdb_t* result = new rocksdb_t;
+  result->rep = dbptr.release();
+  return result;
+}
+
+rocksdb_t* rocksdb_open_as_read_replica_column_families(
+    const rocksdb_options_t* options, const char* name,
+    const char* local_replica_path, int num_column_families,
+    const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr) {
+  std::vector<ColumnFamilyDescriptor> column_families;
+  for (int i = 0; i < num_column_families; i++) {
+    column_families.emplace_back(
+        std::string(column_family_names[i]),
+        ColumnFamilyOptions(column_family_options[i]->rep));
+  }
+
+  std::unique_ptr<DB> dbptr;
+  std::vector<ColumnFamilyHandle*> handles;
+  if (SaveError(errptr,
+                DB::OpenAsReadReplica(
+                    DBOptions(options->rep), std::string(name),
+                    std::string(local_replica_path), column_families, &handles,
+                    &dbptr))) {
+    return nullptr;
+  }
+
+  for (size_t i = 0; i < handles.size(); i++) {
+    rocksdb_column_family_handle_t* c_handle =
+        new rocksdb_column_family_handle_t;
+    c_handle->rep = handles[i];
+    column_family_handles[i] = c_handle;
+  }
+  rocksdb_t* result = new rocksdb_t;
+  result->rep = dbptr.release();
+  return result;
+}
+
+void rocksdb_read_replica_try_catch_up(rocksdb_t* db, char** errptr) {
+  SaveError(errptr, db->rep->TryCatchUpWithPrimary());
+}
+
+void rocksdb_options_set_read_replica_wal_sources(rocksdb_options_t* options,
+                                                  uint32_t sources) {
+  options->rep.read_replica_wal_sources = sources;
+}
+
+uint32_t rocksdb_options_get_read_replica_wal_sources(
+    rocksdb_options_t* options) {
+  return options->rep.read_replica_wal_sources;
+}
+#endif  // ROCKSDB_CLOUD
+
 rocksdb_backup_engine_t* rocksdb_backup_engine_open(
     const rocksdb_options_t* options, const char* path, char** errptr) {
   BackupEngine* be;

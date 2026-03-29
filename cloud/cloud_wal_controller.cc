@@ -647,6 +647,198 @@ IOStatus CloudWALController::RecoverWALFromCloud(
   return IOStatus::OK();
 }
 
+IOStatus CloudWALController::TailWALFromCloud(
+    const std::string& local_dbname) {
+  if (!cloud_opts_.background_wal_sync_to_cloud || !cfs_->HasDestBucket()) {
+    return IOStatus::OK();
+  }
+
+  auto provider = cfs_->GetStorageProvider();
+  if (!provider) {
+    return IOStatus::InvalidArgument("No storage provider for WAL tailing");
+  }
+
+  std::string wal_prefix = cfs_->GetDestObjectPath() + "/wal/";
+  std::vector<std::string> wal_objects;
+  auto st = provider->ListCloudObjects(cfs_->GetDestBucketName(), wal_prefix,
+                                       &wal_objects);
+  if (!st.ok()) {
+    if (st.IsNotFound()) return IOStatus::OK();
+    return st;
+  }
+
+  auto& base_fs = cfs_->GetBaseFileSystem();
+
+  // Separate whole-file WALs from delta chunks
+  std::set<std::string> whole_wal_files;
+  std::map<std::string, std::vector<std::pair<uint64_t, std::string>>>
+      delta_groups;
+
+  for (const auto& obj : wal_objects) {
+    auto delta_pos = obj.find(".delta.");
+    if (delta_pos != std::string::npos) {
+      std::string base_name = obj.substr(0, delta_pos);
+      std::string offset_str = obj.substr(delta_pos + 7);
+      uint64_t offset = 0;
+      try {
+        offset = std::stoull(offset_str);
+      } catch (...) {
+        continue;
+      }
+      delta_groups[base_name].emplace_back(offset, obj);
+    } else if (IsWalFile(obj)) {
+      whole_wal_files.insert(obj);
+    }
+  }
+
+  // Download whole-file WALs that are new or have grown
+  for (const auto& obj : whole_wal_files) {
+    if (delta_groups.count(obj) > 0) continue;
+
+    // Check cloud object size
+    uint64_t cloud_size = 0;
+    auto cloud_path = wal_prefix + obj;
+    st = provider->GetCloudObjectSize(cfs_->GetDestBucketName(), cloud_path,
+                                      &cloud_size);
+    if (!st.ok()) continue;
+
+    {
+      std::lock_guard<std::mutex> lk(tail_mu_);
+      auto it = tailed_cloud_wal_sizes_.find(obj);
+      if (it != tailed_cloud_wal_sizes_.end() && it->second >= cloud_size) {
+        continue;  // already fully downloaded
+      }
+    }
+
+    auto local_path = local_dbname + "/" + obj;
+    st = provider->GetCloudObject(cfs_->GetDestBucketName(), cloud_path,
+                                  local_path);
+    if (st.ok()) {
+      std::lock_guard<std::mutex> lk(tail_mu_);
+      tailed_cloud_wal_sizes_[obj] = cloud_size;
+      Log(InfoLogLevel::DEBUG_LEVEL, info_log_,
+          "[cloud_wal] Tailed WAL file %s (%" PRIu64 " bytes)", obj.c_str(),
+          cloud_size);
+    }
+  }
+
+  // Handle delta groups: reassemble only if newest delta exceeds tracked size
+  for (auto& kv : delta_groups) {
+    const auto& base_name = kv.first;
+    auto& deltas = kv.second;
+    std::sort(deltas.begin(), deltas.end());
+
+    uint64_t max_delta_end = 0;
+    for (const auto& d : deltas) {
+      auto dcloud = wal_prefix + d.second;
+      uint64_t dsz = 0;
+      if (provider->GetCloudObjectSize(cfs_->GetDestBucketName(), dcloud, &dsz)
+              .ok()) {
+        uint64_t end = d.first + dsz;
+        if (end > max_delta_end) max_delta_end = end;
+      }
+    }
+
+    {
+      std::lock_guard<std::mutex> lk(tail_mu_);
+      auto it = tailed_cloud_wal_sizes_.find(base_name);
+      if (it != tailed_cloud_wal_sizes_.end() &&
+          it->second >= max_delta_end) {
+        continue;
+      }
+    }
+
+    // Reassemble
+    auto local_path = local_dbname + "/" + base_name;
+    std::unique_ptr<FSWritableFile> local_file;
+    st = base_fs->NewWritableFile(local_path, FileOptions(), &local_file,
+                                  nullptr);
+    if (!st.ok()) continue;
+
+    bool ok = true;
+    for (const auto& delta : deltas) {
+      auto dcloud = wal_prefix + delta.second;
+      std::string tmp_path = local_path + ".delta_tmp";
+      st = provider->GetCloudObject(cfs_->GetDestBucketName(), dcloud,
+                                    tmp_path);
+      if (!st.ok()) { ok = false; break; }
+
+      uint64_t chunk_size = 0;
+      st = base_fs->GetFileSize(tmp_path, IOOptions(), &chunk_size, nullptr);
+      if (!st.ok() || chunk_size == 0) {
+        base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+        continue;
+      }
+
+      std::unique_ptr<FSSequentialFile> chunk_file;
+      st = base_fs->NewSequentialFile(tmp_path, FileOptions(), &chunk_file,
+                                      nullptr);
+      if (!st.ok()) {
+        base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+        ok = false;
+        break;
+      }
+
+      std::string chunk_data;
+      chunk_data.resize(chunk_size);
+      Slice chunk_result;
+      st = chunk_file->Read(chunk_size, IOOptions(), &chunk_result,
+                            chunk_data.data(), nullptr);
+      if (!st.ok()) {
+        base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+        ok = false;
+        break;
+      }
+
+      st = local_file->Append(chunk_result, IOOptions(), nullptr);
+      base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+      if (!st.ok()) { ok = false; break; }
+    }
+
+    auto cs = local_file->Close(IOOptions(), nullptr);
+    if (!cs.ok() && ok) ok = false;
+
+    if (ok) {
+      std::lock_guard<std::mutex> lk(tail_mu_);
+      tailed_cloud_wal_sizes_[base_name] = max_delta_end;
+      Log(InfoLogLevel::DEBUG_LEVEL, info_log_,
+          "[cloud_wal] Tailed WAL %s from %zu delta chunks",
+          base_name.c_str(), deltas.size());
+    }
+  }
+
+  return IOStatus::OK();
+}
+
+IOStatus CloudWALController::TailWALFromKafka(
+    const std::string& local_dbname) {
+#ifdef USE_KAFKA
+  if (cloud_opts_.kafka_wal_sync_mode == WalKafkaSyncMode::kNone) {
+    return IOStatus::OK();
+  }
+
+  std::string topic = cloud_opts_.kafka_topic_prefix + "." +
+                      cloud_opts_.dest_bucket.GetBucketName();
+
+  Log(InfoLogLevel::DEBUG_LEVEL, info_log_,
+      "[cloud_wal] Tailing WAL from Kafka topic %s into %s", topic.c_str(),
+      local_dbname.c_str());
+
+  KafkaWALTailer tailer(cloud_opts_.kafka_bootstrap_servers, topic,
+                        local_dbname, base_fs_, info_log_);
+  auto st = tailer.ReplayAll();
+  if (!st.ok()) {
+    Log(InfoLogLevel::WARN_LEVEL, info_log_,
+        "[cloud_wal] Kafka WAL tail failed: %s", st.ToString().c_str());
+    return st;
+  }
+  return IOStatus::OK();
+#else
+  (void)local_dbname;
+  return IOStatus::OK();
+#endif
+}
+
 IOStatus CloudWALController::RecoverWALFromKafka(
     const std::string& local_dbname) {
 #ifdef USE_KAFKA

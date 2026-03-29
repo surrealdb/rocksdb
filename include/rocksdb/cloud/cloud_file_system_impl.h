@@ -496,6 +496,10 @@ class CloudFileSystemImpl : public CloudFileSystem {
   CloudReplicationManager* GetReplicationManager() const override {
     return replication_manager_.get();
   }
+
+  CloudWALController* GetWALController() const {
+    return wal_controller_.get();
+  }
 };
 
 }  // namespace ROCKSDB_NAMESPACE

@@ -213,6 +213,28 @@ extern ROCKSDB_LIBRARY_API rocksdb_t* rocksdb_open_as_secondary(
     const rocksdb_options_t* options, const char* name,
     const char* secondary_path, char** errptr);
 
+#ifdef ROCKSDB_CLOUD
+extern ROCKSDB_LIBRARY_API rocksdb_t* rocksdb_open_as_read_replica(
+    const rocksdb_options_t* options, const char* name,
+    const char* local_replica_path, char** errptr);
+
+extern ROCKSDB_LIBRARY_API rocksdb_t*
+rocksdb_open_as_read_replica_column_families(
+    const rocksdb_options_t* options, const char* name,
+    const char* local_replica_path, int num_column_families,
+    const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_read_replica_try_catch_up(
+    rocksdb_t* db, char** errptr);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_options_set_read_replica_wal_sources(
+    rocksdb_options_t* options, uint32_t sources);
+extern ROCKSDB_LIBRARY_API uint32_t
+rocksdb_options_get_read_replica_wal_sources(rocksdb_options_t* options);
+#endif /* ROCKSDB_CLOUD */
+
 extern ROCKSDB_LIBRARY_API rocksdb_backup_engine_t* rocksdb_backup_engine_open(
     const rocksdb_options_t* options, const char* path, char** errptr);
 

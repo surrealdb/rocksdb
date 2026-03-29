@@ -281,6 +281,26 @@ class DB {
       const std::string& leader_path,
       const std::vector<ColumnFamilyDescriptor>& column_families,
       std::vector<ColumnFamilyHandle*>* handles, std::unique_ptr<DB>* dbptr);
+
+#ifdef ROCKSDB_CLOUD
+  // Open a cloud-aware read replica that continuously re-syncs from
+  // MANIFEST/CLOUDMANIFEST and replays WAL from local storage, cloud object
+  // storage (S3/GCS), or Kafka -- without needing to close and reopen the
+  // database. Requires a CloudFileSystem in db_options.env.
+  //
+  // The name argument is the cloud DB path. local_replica_path is a local
+  // directory for info logs and secondary metadata.
+  static Status OpenAsReadReplica(const Options& options,
+                                  const std::string& name,
+                                  const std::string& local_replica_path,
+                                  std::unique_ptr<DB>* dbptr);
+
+  static Status OpenAsReadReplica(
+      const DBOptions& db_options, const std::string& name,
+      const std::string& local_replica_path,
+      const std::vector<ColumnFamilyDescriptor>& column_families,
+      std::vector<ColumnFamilyHandle*>* handles, std::unique_ptr<DB>* dbptr);
+#endif  // ROCKSDB_CLOUD
   // End EXPERIMENTAL
 
   static Status OpenAndCompact(

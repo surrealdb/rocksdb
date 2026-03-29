@@ -145,6 +145,16 @@ class CloudWALController {
   // so that DB::Recover() can replay them. No-op if Kafka is not configured.
   IOStatus RecoverWALFromKafka(const std::string& local_dbname);
 
+  // Incrementally download new or grown WAL files from cloud object storage.
+  // Only fetches WAL files (or delta chunks) not yet present locally or whose
+  // cloud size exceeds the previously downloaded size. Thread-safe.
+  IOStatus TailWALFromCloud(const std::string& local_dbname);
+
+  // Incrementally consume new WAL records from Kafka since the last call.
+  // Records are materialized as local WAL files so the secondary replay
+  // path can process them. No-op if Kafka is not configured. Thread-safe.
+  IOStatus TailWALFromKafka(const std::string& local_dbname);
+
   bool IsActive() const { return active_; }
 
  private:
@@ -159,6 +169,10 @@ class CloudWALController {
 #endif
 
   std::unique_ptr<BackgroundWALUploader> bg_uploader_;
+
+  // State for incremental cloud WAL tailing: tracks downloaded size per file.
+  std::mutex tail_mu_;
+  std::unordered_map<std::string, uint64_t> tailed_cloud_wal_sizes_;
 };
 
 }  // namespace ROCKSDB_NAMESPACE

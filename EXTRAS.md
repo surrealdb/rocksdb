@@ -199,3 +199,50 @@ Key components:
   is deleted
 - New `use_wal_delta_upload` option on `CloudFileSystemOptions` with C API
   bindings
+
+## Read replica node (live re-sync without reopen)
+
+A new cloud-aware read replica DB mode (`DBImplReadReplica`) that
+continuously re-syncs from MANIFEST/CLOUDMANIFEST and replays WAL from
+multiple sources — all without closing and reopening the database.
+
+Existing read-only modes (`DBImplSecondary`, `DBImplFollower`, `DBCloud`
+read-only) each cover part of this problem but none support live cloud
+re-sync combined with WAL replay. The read replica unifies them.
+
+Key components:
+
+- **`DBImplReadReplica`** — extends `DBImplSecondary` with cloud
+  MANIFEST re-sync, multi-source WAL replay, and a background refresh
+  thread. Located in `db/db_impl/db_impl_read_replica.{h,cc}`.
+- **`DB::OpenAsReadReplica()`** — new public API (under
+  `#ifdef ROCKSDB_CLOUD`) for opening a cloud-backed database as a
+  read replica. Accepts the cloud DB path and a local replica path for
+  caching SSTs, WAL files, and logs.
+- **Incremental WAL tailing** — `CloudWALController::TailWALFromCloud()`
+  and `TailWALFromKafka()` added for incremental consumption (vs. the
+  existing one-shot recovery methods). Cloud tailing tracks per-file
+  download sizes to avoid re-downloading unchanged WAL files. Kafka
+  tailing consumes new records since the last offset.
+- **Configurable WAL sources** — new `read_replica_wal_sources` bitflag
+  option on `DBOptions` (`kReadReplicaWALLocal`, `kReadReplicaWALCloud`,
+  `kReadReplicaWALKafka`) lets operators choose any combination of
+  local, cloud, and Kafka WAL sources.
+- **Background periodic refresh** — modelled on `DBImplFollower`, reuses
+  `follower_refresh_catchup_period_ms` and retry options for automatic
+  catch-up with the leader.
+
+Catch-up flow (`TryCatchUpWithPrimary()`):
+1. Re-fetch CLOUDMANIFEST from cloud storage.
+2. Tail MANIFEST via `ReactiveVersionSet::ReadAndApply()`.
+3. Fetch new WAL from cloud/Kafka (materialised as local files).
+4. Replay local WAL files (inherited from `DBImplSecondary`).
+5. Install new SuperVersions and purge obsolete files.
+
+Also includes:
+- Full C API bindings (`rocksdb_open_as_read_replica`,
+  `rocksdb_open_as_read_replica_column_families`,
+  `rocksdb_read_replica_try_catch_up`,
+  `rocksdb_options_set_read_replica_wal_sources`)
+- `GetWALController()` accessor on `CloudFileSystemImpl`
+- Test suite in `cloud/db_read_replica_test.cc`
