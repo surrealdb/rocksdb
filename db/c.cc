@@ -9297,6 +9297,16 @@ uint64_t rocksdb_cloud_fs_options_get_background_wal_sync_interval_ms(
   return opts->rep.background_wal_sync_interval_ms;
 }
 
+void rocksdb_cloud_fs_options_set_use_wal_delta_upload(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val) {
+  opts->rep.use_wal_delta_upload = val;
+}
+
+unsigned char rocksdb_cloud_fs_options_get_use_wal_delta_upload(
+    rocksdb_cloud_fs_options_t* opts) {
+  return opts->rep.use_wal_delta_upload;
+}
+
 // Cloud bandwidth throttling
 
 void rocksdb_cloud_fs_options_set_cloud_upload_rate_limiter(

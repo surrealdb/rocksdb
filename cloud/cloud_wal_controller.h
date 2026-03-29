@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 
 #include "rocksdb/cloud/cloud_file_system.h"
 #include "rocksdb/file_system.h"
@@ -79,11 +80,14 @@ class CloudWALWritableFile : public FSWritableFile {
 };
 
 // Periodically uploads local WAL files to cloud object storage.
+// Tracks per-file upload sizes to skip unchanged files and optionally
+// uploads only new bytes as delta objects when use_delta_upload is set.
 class BackgroundWALUploader {
  public:
   BackgroundWALUploader(CloudFileSystem* cfs,
                         const std::string& local_dbname,
-                        uint64_t interval_ms);
+                        uint64_t interval_ms,
+                        bool use_delta_upload);
   ~BackgroundWALUploader();
 
   void Start();
@@ -96,12 +100,20 @@ class BackgroundWALUploader {
   void DoUpload(void* arg);
   void DoUploadImpl();
 
+  // Upload only bytes [from_offset, to_size) as a delta object.
+  IOStatus UploadWALDelta(const std::string& local_path,
+                          uint64_t from_offset, uint64_t to_size);
+
   CloudFileSystem* cfs_;
   std::string local_dbname_;
   uint64_t interval_ms_;
+  bool use_delta_upload_;
   std::shared_ptr<CloudScheduler> scheduler_;
   long job_handle_;
   std::atomic<bool> running_;
+
+  std::mutex mu_;
+  std::unordered_map<std::string, uint64_t> uploaded_sizes_;
 };
 
 // Manages WAL write routing: local files, Kafka publishing, and background

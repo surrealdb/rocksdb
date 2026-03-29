@@ -447,6 +447,12 @@ class CloudFileSystemOptions {
   // Default: 5000 (5 seconds)
   uint64_t background_wal_sync_interval_ms = 5000;
 
+  // When true and background_wal_sync_to_cloud is enabled, only new bytes
+  // since the last upload are written as separate delta objects rather than
+  // re-uploading the entire WAL file. Recovery reassembles deltas in order.
+  // Default: false
+  bool use_wal_delta_upload = false;
+
   // Buckets in other regions to replicate SST/MANIFEST/CLOUDMANIFEST to.
   // Each bucket gets its own CloudStorageProvider (for cross-region S3 clients).
   // SSTs are replicated asynchronously after primary upload.
@@ -501,7 +507,8 @@ class CloudFileSystemOptions {
       std::string _kafka_bootstrap_servers = "",
       std::string _kafka_topic_prefix = "rocksdb-wal",
       bool _background_wal_sync_to_cloud = false,
-      uint64_t _background_wal_sync_interval_ms = 5000)
+      uint64_t _background_wal_sync_interval_ms = 5000,
+      bool _use_wal_delta_upload = false)
       : keep_local_sst_files(_keep_local_sst_files),
         purger_periodicity_millis(_purger_periodicity_millis),
         validate_filesize(_validate_filesize),
@@ -532,7 +539,8 @@ class CloudFileSystemOptions {
         kafka_bootstrap_servers(std::move(_kafka_bootstrap_servers)),
         kafka_topic_prefix(std::move(_kafka_topic_prefix)),
         background_wal_sync_to_cloud(_background_wal_sync_to_cloud),
-        background_wal_sync_interval_ms(_background_wal_sync_interval_ms) {
+        background_wal_sync_interval_ms(_background_wal_sync_interval_ms),
+        use_wal_delta_upload(_use_wal_delta_upload) {
     (void)_cloud_type;
   }
 

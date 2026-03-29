@@ -4112,6 +4112,14 @@ extern ROCKSDB_LIBRARY_API uint64_t
 rocksdb_cloud_fs_options_get_background_wal_sync_interval_ms(
     rocksdb_cloud_fs_options_t* opts);
 
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_use_wal_delta_upload(
+    rocksdb_cloud_fs_options_t* opts, unsigned char val);
+
+extern ROCKSDB_LIBRARY_API unsigned char
+rocksdb_cloud_fs_options_get_use_wal_delta_upload(
+    rocksdb_cloud_fs_options_t* opts);
+
 /* Cloud bandwidth throttling */
 
 extern ROCKSDB_LIBRARY_API void

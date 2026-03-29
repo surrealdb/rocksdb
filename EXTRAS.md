@@ -179,3 +179,23 @@ The recovery runs after cloud WAL download and before the background WAL
 uploader starts. It is a no-op when Kafka sync is not configured
 (`kafka_wal_sync_mode == kNone`) or when RocksDB is built without Kafka
 support.
+
+## Incremental WAL cloud upload with delta mode
+
+Added size-tracking to `BackgroundWALUploader` to skip re-uploading
+unchanged WAL files, and an opt-in `use_wal_delta_upload` mode that uploads
+only new bytes as separate delta objects rather than re-uploading the entire
+file.
+
+Key components:
+- Per-file uploaded-size tracking — skips upload when local size matches
+  the last uploaded size
+- `UploadWALDelta()` — reads only new bytes from the WAL file and uploads
+  them as `.delta.<offset>` objects in cloud storage
+- Recovery reassembly — `RecoverWALFromCloud()` detects delta chunks,
+  groups them by base WAL file name, sorts by offset, and concatenates
+  them into complete local WAL files
+- Cleanup of obsolete delta objects when the corresponding local WAL file
+  is deleted
+- New `use_wal_delta_upload` option on `CloudFileSystemOptions` with C API
+  bindings

@@ -4,7 +4,9 @@
 
 #include "cloud/cloud_wal_controller.h"
 
+#include <algorithm>
 #include <cinttypes>
+#include <map>
 #include <set>
 
 #include "cloud/cloud_scheduler.h"
@@ -216,10 +218,12 @@ uint64_t CloudWALWritableFile::GetFileSize(const IOOptions& opts,
 
 BackgroundWALUploader::BackgroundWALUploader(CloudFileSystem* cfs,
                                              const std::string& local_dbname,
-                                             uint64_t interval_ms)
+                                             uint64_t interval_ms,
+                                             bool use_delta_upload)
     : cfs_(cfs),
       local_dbname_(local_dbname),
       interval_ms_(interval_ms),
+      use_delta_upload_(use_delta_upload),
       job_handle_(-1),
       running_(false) {}
 
@@ -232,6 +236,73 @@ IOStatus BackgroundWALUploader::UploadWALFile(const std::string& local_path) {
   auto fname = basename(local_path);
   auto cloud_path = cfs_->GetDestObjectPath() + "/wal/" + fname;
   return cfs_->CopyLocalFileToDest(local_path, cloud_path);
+}
+
+IOStatus BackgroundWALUploader::UploadWALDelta(const std::string& local_path,
+                                               uint64_t from_offset,
+                                               uint64_t to_size) {
+  if (!cfs_->HasDestBucket()) {
+    return IOStatus::InvalidArgument("No destination bucket for WAL upload");
+  }
+
+  auto& base_fs = cfs_->GetBaseFileSystem();
+  uint64_t delta_len = to_size - from_offset;
+
+  std::unique_ptr<FSSequentialFile> file;
+  auto s = base_fs->NewSequentialFile(local_path, FileOptions(), &file,
+                                      nullptr);
+  if (!s.ok()) return s;
+
+  // Skip to the delta start offset
+  if (from_offset > 0) {
+    std::unique_ptr<char[]> skip_buf(new char[from_offset]);
+    Slice skip_result;
+    s = file->Read(from_offset, IOOptions(), &skip_result, skip_buf.get(),
+                   nullptr);
+    if (!s.ok()) return s;
+  }
+
+  // Read the delta bytes
+  std::string delta_data;
+  delta_data.resize(delta_len);
+  Slice read_result;
+  s = file->Read(delta_len, IOOptions(), &read_result,
+                 delta_data.data(), nullptr);
+  if (!s.ok()) return s;
+  delta_data.resize(read_result.size());
+
+  // Write delta to a temp file and upload
+  auto fname = basename(local_path);
+  std::string delta_suffix = ".delta." + std::to_string(from_offset);
+  auto cloud_path =
+      cfs_->GetDestObjectPath() + "/wal/" + fname + delta_suffix;
+
+  std::string tmp_path = local_path + delta_suffix + ".tmp";
+  {
+    std::unique_ptr<FSWritableFile> tmp_file;
+    s = base_fs->NewWritableFile(tmp_path, FileOptions(), &tmp_file, nullptr);
+    if (!s.ok()) return s;
+    s = tmp_file->Append(Slice(delta_data), IOOptions(), nullptr);
+    if (!s.ok()) {
+      base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+      return s;
+    }
+    s = tmp_file->Close(IOOptions(), nullptr);
+    if (!s.ok()) {
+      base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+      return s;
+    }
+  }
+
+  s = cfs_->CopyLocalFileToDest(tmp_path, cloud_path);
+  base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+
+  if (s.ok()) {
+    Log(InfoLogLevel::DEBUG_LEVEL, cfs_->GetLogger(),
+        "[cloud_wal] Uploaded delta %s offset %" PRIu64 " len %" PRIu64,
+        fname.c_str(), from_offset, delta_len);
+  }
+  return s;
 }
 
 void BackgroundWALUploader::DoUpload(void* /*arg*/) {
@@ -251,14 +322,39 @@ void BackgroundWALUploader::DoUploadImpl() {
     if (!IsWalFile(child)) continue;
     local_wal_files.insert(child);
     auto local_path = local_dbname_ + "/" + child;
-    auto s = UploadWALFile(local_path);
-    if (!s.ok()) {
+
+    uint64_t local_size = 0;
+    auto ss = base_fs->GetFileSize(local_path, IOOptions(), &local_size,
+                                   nullptr);
+    if (!ss.ok()) continue;
+
+    uint64_t last_uploaded = 0;
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      auto it = uploaded_sizes_.find(child);
+      if (it != uploaded_sizes_.end()) last_uploaded = it->second;
+    }
+
+    if (local_size == last_uploaded) continue;
+
+    IOStatus s;
+    if (use_delta_upload_) {
+      s = UploadWALDelta(local_path, last_uploaded, local_size);
+    } else {
+      s = UploadWALFile(local_path);
+    }
+
+    if (s.ok()) {
+      std::lock_guard<std::mutex> lk(mu_);
+      uploaded_sizes_[child] = local_size;
+    } else {
       Log(InfoLogLevel::WARN_LEVEL, cfs_->GetLogger(),
           "[cloud_wal] Background WAL upload failed for %s: %s",
           local_path.c_str(), s.ToString().c_str());
     }
   }
 
+  // Clean up obsolete cloud objects for WAL files no longer present locally
   if (cfs_->HasDestBucket()) {
     auto provider = cfs_->GetStorageProvider();
     std::string wal_prefix = cfs_->GetDestObjectPath() + "/wal/";
@@ -267,8 +363,14 @@ void BackgroundWALUploader::DoUploadImpl() {
                                          wal_prefix, &cloud_wals);
     if (ls.ok()) {
       for (const auto& cloud_wal : cloud_wals) {
-        if (!IsWalFile(cloud_wal)) continue;
-        if (local_wal_files.find(cloud_wal) == local_wal_files.end()) {
+        // Extract the base WAL name (strip .delta.NNN suffix if present)
+        std::string base_name = cloud_wal;
+        auto delta_pos = base_name.find(".delta.");
+        if (delta_pos != std::string::npos) {
+          base_name = base_name.substr(0, delta_pos);
+        }
+        if (!IsWalFile(base_name)) continue;
+        if (local_wal_files.find(base_name) == local_wal_files.end()) {
           auto cloud_path = wal_prefix + cloud_wal;
           auto ds = provider->DeleteCloudObject(cfs_->GetDestBucketName(),
                                                 cloud_path);
@@ -276,6 +378,18 @@ void BackgroundWALUploader::DoUploadImpl() {
             Log(InfoLogLevel::INFO_LEVEL, cfs_->GetLogger(),
                 "[cloud_wal] Deleted obsolete S3 WAL %s", cloud_path.c_str());
           }
+        }
+      }
+    }
+
+    // Remove tracking entries for deleted WAL files
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      for (auto it = uploaded_sizes_.begin(); it != uploaded_sizes_.end();) {
+        if (local_wal_files.find(it->first) == local_wal_files.end()) {
+          it = uploaded_sizes_.erase(it);
+        } else {
+          ++it;
         }
       }
     }
@@ -291,8 +405,9 @@ void BackgroundWALUploader::Start() {
       [](void* arg) { static_cast<BackgroundWALUploader*>(arg)->DoUpload(arg); },
       this);
   Log(InfoLogLevel::INFO_LEVEL, cfs_->GetLogger(),
-      "[cloud_wal] Background WAL uploader started, interval %" PRIu64 "ms",
-      interval_ms_);
+      "[cloud_wal] Background WAL uploader started, interval %" PRIu64
+      "ms delta=%d",
+      interval_ms_, use_delta_upload_);
 }
 
 void BackgroundWALUploader::Stop() {
@@ -360,7 +475,8 @@ void CloudWALController::StartBackgroundUploader(
     const std::string& local_dbname) {
   if (cloud_opts_.background_wal_sync_to_cloud && !bg_uploader_) {
     bg_uploader_ = std::make_unique<BackgroundWALUploader>(
-        cfs_, local_dbname, cloud_opts_.background_wal_sync_interval_ms);
+        cfs_, local_dbname, cloud_opts_.background_wal_sync_interval_ms,
+        cloud_opts_.use_wal_delta_upload);
     bg_uploader_->Start();
   }
 }
@@ -397,8 +513,7 @@ IOStatus CloudWALController::RecoverWALFromCloud(
     return IOStatus::InvalidArgument("No storage provider for WAL recovery");
   }
 
-  std::string wal_prefix =
-      cfs_->GetDestObjectPath() + "/wal/";
+  std::string wal_prefix = cfs_->GetDestObjectPath() + "/wal/";
   std::vector<std::string> wal_objects;
   auto st = provider->ListCloudObjects(cfs_->GetDestBucketName(), wal_prefix,
                                        &wal_objects);
@@ -407,8 +522,32 @@ IOStatus CloudWALController::RecoverWALFromCloud(
     return st;
   }
 
+  // Separate whole-file WALs from delta chunks and group deltas by base name
+  std::set<std::string> whole_wal_files;
+  // base_name -> sorted list of (offset, cloud_object_name)
+  std::map<std::string, std::vector<std::pair<uint64_t, std::string>>>
+      delta_groups;
+
   for (const auto& obj : wal_objects) {
-    if (!IsWalFile(obj)) continue;
+    auto delta_pos = obj.find(".delta.");
+    if (delta_pos != std::string::npos) {
+      std::string base_name = obj.substr(0, delta_pos);
+      std::string offset_str = obj.substr(delta_pos + 7);  // len(".delta.") = 7
+      uint64_t offset = 0;
+      try {
+        offset = std::stoull(offset_str);
+      } catch (...) {
+        continue;
+      }
+      delta_groups[base_name].emplace_back(offset, obj);
+    } else if (IsWalFile(obj)) {
+      whole_wal_files.insert(obj);
+    }
+  }
+
+  // Download whole-file WALs (skip any that have delta chunks)
+  for (const auto& obj : whole_wal_files) {
+    if (delta_groups.count(obj) > 0) continue;
     auto local_path = local_dbname + "/" + obj;
     auto cloud_path = wal_prefix + obj;
     st = provider->GetCloudObject(cfs_->GetDestBucketName(), cloud_path,
@@ -420,6 +559,88 @@ IOStatus CloudWALController::RecoverWALFromCloud(
     } else if (st.ok()) {
       Log(InfoLogLevel::INFO_LEVEL, info_log_,
           "[cloud_wal] Recovered WAL file %s from cloud", obj.c_str());
+    }
+  }
+
+  // Reassemble delta groups into local WAL files
+  auto& base_fs = cfs_->GetBaseFileSystem();
+  for (auto& kv : delta_groups) {
+    const auto& base_name = kv.first;
+    auto& deltas = kv.second;
+
+    std::sort(deltas.begin(), deltas.end());
+
+    auto local_path = local_dbname + "/" + base_name;
+    std::unique_ptr<FSWritableFile> local_file;
+    st = base_fs->NewWritableFile(local_path, FileOptions(), &local_file,
+                                  nullptr);
+    if (!st.ok()) {
+      Log(InfoLogLevel::WARN_LEVEL, info_log_,
+          "[cloud_wal] Failed to create local WAL %s for delta reassembly: %s",
+          local_path.c_str(), st.ToString().c_str());
+      continue;
+    }
+
+    bool reassembly_ok = true;
+    for (const auto& delta : deltas) {
+      auto cloud_path = wal_prefix + delta.second;
+      std::string tmp_path = local_path + ".delta_tmp";
+      st = provider->GetCloudObject(cfs_->GetDestBucketName(), cloud_path,
+                                    tmp_path);
+      if (!st.ok()) {
+        Log(InfoLogLevel::WARN_LEVEL, info_log_,
+            "[cloud_wal] Failed to download delta %s: %s",
+            cloud_path.c_str(), st.ToString().c_str());
+        reassembly_ok = false;
+        break;
+      }
+
+      uint64_t chunk_size = 0;
+      st = base_fs->GetFileSize(tmp_path, IOOptions(), &chunk_size, nullptr);
+      if (!st.ok() || chunk_size == 0) {
+        base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+        continue;
+      }
+
+      std::unique_ptr<FSSequentialFile> chunk_file;
+      st = base_fs->NewSequentialFile(tmp_path, FileOptions(), &chunk_file,
+                                      nullptr);
+      if (!st.ok()) {
+        base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+        reassembly_ok = false;
+        break;
+      }
+
+      std::string chunk_data;
+      chunk_data.resize(chunk_size);
+      Slice chunk_result;
+      st = chunk_file->Read(chunk_size, IOOptions(), &chunk_result,
+                            chunk_data.data(), nullptr);
+      if (!st.ok()) {
+        base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+        reassembly_ok = false;
+        break;
+      }
+
+      st = local_file->Append(chunk_result, IOOptions(), nullptr);
+      base_fs->DeleteFile(tmp_path, IOOptions(), nullptr);
+      if (!st.ok()) {
+        reassembly_ok = false;
+        break;
+      }
+    }
+
+    auto cs = local_file->Close(IOOptions(), nullptr);
+    if (!cs.ok() && reassembly_ok) reassembly_ok = false;
+
+    if (reassembly_ok) {
+      Log(InfoLogLevel::INFO_LEVEL, info_log_,
+          "[cloud_wal] Recovered WAL %s from %zu delta chunks",
+          base_name.c_str(), deltas.size());
+    } else {
+      Log(InfoLogLevel::WARN_LEVEL, info_log_,
+          "[cloud_wal] Failed to reassemble WAL %s from deltas",
+          base_name.c_str());
     }
   }
 
