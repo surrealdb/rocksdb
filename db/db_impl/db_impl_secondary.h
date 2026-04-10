@@ -277,6 +277,7 @@ class DBImplSecondary : public DBImpl {
 
  private:
   friend class DB;
+  friend class DBImplReadReplica;
 
   // No copying allowed
   DBImplSecondary(const DBImplSecondary&);

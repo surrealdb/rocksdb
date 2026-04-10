@@ -811,7 +811,8 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
       calculate_sst_write_lifetime_hint_set(
           options.calculate_sst_write_lifetime_hint_set)
 #ifdef ROCKSDB_CLOUD
-      ,max_num_replication_epochs(options.max_num_replication_epochs)
+      ,max_num_replication_epochs(options.max_num_replication_epochs),
+      read_replica_wal_sources(options.read_replica_wal_sources)
 #endif  // ROCKSDB_CLOUD
 {
   fs = env->GetFileSystem();

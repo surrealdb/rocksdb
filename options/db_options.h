@@ -111,6 +111,7 @@ struct ImmutableDBOptions {
   CompactionStyleSet calculate_sst_write_lifetime_hint_set;
 #ifdef ROCKSDB_CLOUD
   uint32_t max_num_replication_epochs;
+  uint32_t read_replica_wal_sources;
 #endif  // ROCKSDB_CLOUD
 
   // Beginning convenience/helper objects that are not part of the base

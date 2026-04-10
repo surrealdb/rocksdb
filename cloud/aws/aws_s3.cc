@@ -1051,7 +1051,9 @@ IOStatus S3StorageProvider::DoPutCloudObject(const std::string& local_file,
     if (ul_limiter) {
       rl_buf = std::make_unique<RateLimitedReadStreamBuf>(
           inputData->rdbuf(), ul_limiter.get());
-      inputData->rdbuf(rl_buf.get());
+      // Use the std::ios base-class setter explicitly because newer AWS SDK
+      // versions hide it behind a 0-argument-only override in Aws::IOStream.
+      static_cast<std::ios*>(inputData.get())->rdbuf(rl_buf.get());
     }
 
     Aws::S3::Model::PutObjectRequest putRequest;
