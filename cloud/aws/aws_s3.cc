@@ -115,13 +115,17 @@ class AwsS3ClientWrapper {
       const Aws::Client::ClientConfiguration& config,
       const CloudFileSystemOptions& cloud_options)
       : cloud_request_callback_(cloud_options.cloud_request_callback) {
+    // Use path-style addressing when endpoint is overridden (MinIO, LocalStack, etc.)
+    // Virtual-hosted addressing (bucket.endpoint) doesn't work with custom endpoints.
+    bool useVirtualAddressing = cloud_options.endpoint_override.empty();
+
     if (cloud_options.s3_client_factory) {
       client_ = cloud_options.s3_client_factory(creds, config);
     } else if (creds) {
       client_ = std::make_shared<Aws::S3::S3Client>(
           creds, config,
           Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::Never,
-          true /* useVirtualAddressing */);
+          useVirtualAddressing);
     } else {
       client_ = std::make_shared<Aws::S3::S3Client>(config);
     }
@@ -476,6 +480,7 @@ Status S3StorageProvider::PrepareOptions(const ConfigOptions& options) {
       return Status::InvalidArgument("Two different regions not supported");
     }
   }
+
   Aws::Client::ClientConfiguration config;
   Status status = AwsCloudOptions::GetClientConfiguration(
       cfs, cloud_opts.src_bucket.GetRegion(), &config);

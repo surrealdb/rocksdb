@@ -4154,6 +4154,12 @@ rocksdb_cloud_fs_options_set_cloud_download_rate_limiter(
     rocksdb_cloud_fs_options_t* opts, int64_t rate_bytes_per_sec,
     int64_t refill_period_us, int32_t fairness);
 
+/* Cloud endpoint override (for S3-compatible services like MinIO) */
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_cloud_fs_options_set_endpoint_override(
+    rocksdb_cloud_fs_options_t* opts, const char* endpoint);
+
 /* Cloud fallback bucket options */
 
 extern ROCKSDB_LIBRARY_API void

@@ -280,6 +280,10 @@ class CloudFileSystemOptions {
   // means the default timeout assigned by the underlying cloud storage.
   uint64_t request_timeout_ms;
 
+  // Custom S3-compatible endpoint URL (e.g. "http://localhost:9200" for MinIO).
+  // Empty string means use the default AWS endpoint for the configured region.
+  std::string endpoint_override;
+
   // Use this to turn off the purger. You can do this if you don't use the clone
   // feature of RocksDB cloud
   // Default: true

@@ -2317,6 +2317,7 @@ Status CloudFileSystemImpl::PrepareOptions(const ConfigOptions& options) {
   if (!base_fs_) {
     base_fs_ = FileSystem::Default();
   }
+
   Status status = CheckValidity();
   if (!status.ok()) {
     return status;
@@ -2345,6 +2346,7 @@ Status CloudFileSystemImpl::PrepareOptions(const ConfigOptions& options) {
     CloudFileSystemImpl* cloud = this;
     purge_thread_ = std::thread([cloud] { cloud->Purger(); });
   }
+
   return CloudFileSystem::PrepareOptions(options);
 }
 

@@ -514,8 +514,12 @@ int DoRegisterCloudObjects(ObjectLibrary& library, const std::string& arg) {
       });
   count++;
 
+#ifdef USE_AWS
   count += CloudFileSystemImpl::RegisterAwsObjects(library, arg);
+#endif
+#ifdef USE_GCS
   count += CloudFileSystemImpl::RegisterGcsObjects(library, arg);
+#endif
 
   return count;
 }

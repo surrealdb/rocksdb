@@ -9396,6 +9396,13 @@ void rocksdb_cloud_fs_options_set_cloud_download_rate_limiter(
   }
 }
 
+// Cloud endpoint override
+
+void rocksdb_cloud_fs_options_set_endpoint_override(
+    rocksdb_cloud_fs_options_t* opts, const char* endpoint) {
+  opts->rep.endpoint_override = std::string(endpoint);
+}
+
 // Cloud fallback bucket options
 
 void rocksdb_cloud_fs_options_add_fallback_bucket(

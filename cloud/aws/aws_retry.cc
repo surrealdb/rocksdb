@@ -129,6 +129,15 @@ Status AwsCloudOptions::GetClientConfiguration(
   }
 
   config->region = ToAwsString(region);
+
+  // Custom endpoint override for S3-compatible services (MinIO, LocalStack)
+  if (!cloud_fs_options.endpoint_override.empty()) {
+    config->endpointOverride =
+        ToAwsString(cloud_fs_options.endpoint_override);
+    // Use path-style addressing for S3-compatible services
+    // (virtual-hosted style requires DNS setup that local services lack)
+  }
+
   return Status::OK();
 }
 #else

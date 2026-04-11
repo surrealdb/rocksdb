@@ -271,6 +271,7 @@ Status CloudStorageProvider::CreateFromString(
 Status CloudStorageProviderImpl::PrepareOptions(const ConfigOptions& options) {
   cfs_ = static_cast<CloudFileSystem*>(options.env->GetFileSystem().get());
   assert(cfs_);
+
   Status st = CloudStorageProvider::PrepareOptions(options);
   if (!st.ok()) {
     return st;
