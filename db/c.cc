@@ -3907,6 +3907,25 @@ void rocksdb_block_based_options_set_block_align(
   options->rep.block_align = v;
 }
 
+void rocksdb_block_based_options_set_max_auto_readahead_size(
+    rocksdb_block_based_table_options_t* options,
+    size_t max_auto_readahead_size) {
+  options->rep.max_auto_readahead_size = max_auto_readahead_size;
+}
+
+void rocksdb_block_based_options_set_initial_auto_readahead_size(
+    rocksdb_block_based_table_options_t* options,
+    size_t initial_auto_readahead_size) {
+  options->rep.initial_auto_readahead_size = initial_auto_readahead_size;
+}
+
+void rocksdb_block_based_options_set_num_file_reads_for_auto_readahead(
+    rocksdb_block_based_table_options_t* options,
+    uint64_t num_file_reads_for_auto_readahead) {
+  options->rep.num_file_reads_for_auto_readahead =
+      num_file_reads_for_auto_readahead;
+}
+
 /* FlushJobInfo */
 
 const char* rocksdb_flushjobinfo_cf_name(const rocksdb_flushjobinfo_t* info,
