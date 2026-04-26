@@ -2013,6 +2013,29 @@ void rocksdb_delete_cf_with_ts(rocksdb_t* db,
                                     Slice(key, keylen), Slice(ts, tslen)));
 }
 
+void rocksdb_delete_range_with_ts(rocksdb_t* db,
+                                  const rocksdb_writeoptions_t* options,
+                                  const char* start_key,
+                                  size_t start_key_len, const char* end_key,
+                                  size_t end_key_len, const char* ts,
+                                  size_t tslen, char** errptr) {
+  SaveError(errptr, db->rep->DeleteRange(
+                        options->rep, db->rep->DefaultColumnFamily(),
+                        Slice(start_key, start_key_len),
+                        Slice(end_key, end_key_len), Slice(ts, tslen)));
+}
+
+void rocksdb_delete_range_cf_with_ts(
+    rocksdb_t* db, const rocksdb_writeoptions_t* options,
+    rocksdb_column_family_handle_t* column_family, const char* start_key,
+    size_t start_key_len, const char* end_key, size_t end_key_len,
+    const char* ts, size_t tslen, char** errptr) {
+  SaveError(errptr,
+            db->rep->DeleteRange(options->rep, column_family->rep,
+                                 Slice(start_key, start_key_len),
+                                 Slice(end_key, end_key_len), Slice(ts, tslen)));
+}
+
 void rocksdb_singledelete(rocksdb_t* db, const rocksdb_writeoptions_t* options,
                           const char* key, size_t keylen, char** errptr) {
   SaveError(errptr, db->rep->SingleDelete(options->rep, Slice(key, keylen)));
@@ -3082,6 +3105,14 @@ void rocksdb_writebatch_delete_range_cf(
     size_t end_key_len) {
   b->rep.DeleteRange(column_family->rep, Slice(start_key, start_key_len),
                      Slice(end_key, end_key_len));
+}
+
+void rocksdb_writebatch_delete_range_cf_with_ts(
+    rocksdb_writebatch_t* b, rocksdb_column_family_handle_t* column_family,
+    const char* start_key, size_t start_key_len, const char* end_key,
+    size_t end_key_len, const char* ts, size_t tslen) {
+  b->rep.DeleteRange(column_family->rep, Slice(start_key, start_key_len),
+                     Slice(end_key, end_key_len), Slice(ts, tslen));
 }
 
 void rocksdb_writebatch_delete_rangev(rocksdb_writebatch_t* b, int num_keys,
