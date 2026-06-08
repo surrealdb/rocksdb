@@ -749,11 +749,44 @@ class Transaction {
     return Status::NotSupported("timestamp not supported");
   }
 
+  // Byte-slice variant for column families whose user-defined timestamp is
+  // not u64-sized (e.g. 16-byte UDT). The default returns NotSupported;
+  // OptimisticTransaction overrides this to capture the bytes for use in
+  // `CheckKeysForConflicts`.
+  virtual Status SetReadTimestampForValidation(const Slice& /*ts*/) {
+    return Status::NotSupported("timestamp not supported");
+  }
+
   virtual Status SetCommitTimestamp(TxnTimestamp /*ts*/) {
     return Status::NotSupported("timestamp not supported");
   }
 
   virtual TxnTimestamp GetCommitTimestamp() const { return kMaxTxnTimestamp; }
+
+  // Timestamped write overloads. Callers supply the final user-defined
+  // timestamp directly, so `MaybeStampWriteBatchTimestamps` (which produces
+  // an 8-byte stamp from `commit_timestamp_`) does not run for these
+  // writes — see the gate in `OptimisticTransaction::MaybeStampWriteBatchTimestamps`.
+  // The default returns NotSupported; only OptimisticTransaction implements
+  // them at present.
+  virtual Status PutWithTimestamp(ColumnFamilyHandle* /*column_family*/,
+                                  const Slice& /*key*/, const Slice& /*ts*/,
+                                  const Slice& /*value*/,
+                                  const bool /*assume_tracked*/ = false) {
+    return Status::NotSupported("timestamped Put not supported");
+  }
+
+  virtual Status DeleteWithTimestamp(ColumnFamilyHandle* /*column_family*/,
+                                     const Slice& /*key*/, const Slice& /*ts*/,
+                                     const bool /*assume_tracked*/ = false) {
+    return Status::NotSupported("timestamped Delete not supported");
+  }
+
+  virtual Status SingleDeleteWithTimestamp(
+      ColumnFamilyHandle* /*column_family*/, const Slice& /*key*/,
+      const Slice& /*ts*/, const bool /*assume_tracked*/ = false) {
+    return Status::NotSupported("timestamped SingleDelete not supported");
+  }
 
  protected:
   explicit Transaction(const TransactionDB* /*db*/) {}

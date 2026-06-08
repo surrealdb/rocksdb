@@ -144,6 +144,8 @@ typedef struct rocksdb_optimistictransactiondb_t
     rocksdb_optimistictransactiondb_t;
 typedef struct rocksdb_optimistictransaction_options_t
     rocksdb_optimistictransaction_options_t;
+typedef struct rocksdb_optimistictransactiondb_options_t
+    rocksdb_optimistictransactiondb_options_t;
 typedef struct rocksdb_transaction_t rocksdb_transaction_t;
 typedef struct rocksdb_checkpoint_t rocksdb_checkpoint_t;
 typedef struct rocksdb_wal_iterator_t rocksdb_wal_iterator_t;
@@ -3183,6 +3185,25 @@ extern ROCKSDB_LIBRARY_API void
 rocksdb_transaction_set_read_timestamp_for_validation(
     rocksdb_transaction_t* txn, uint64_t read_timestamp);
 
+extern ROCKSDB_LIBRARY_API void
+rocksdb_transaction_set_read_timestamp_for_validation_bytes(
+    rocksdb_transaction_t* txn, const char* ts, size_t tslen);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_transaction_put_cf_with_ts(
+    rocksdb_transaction_t* txn, rocksdb_column_family_handle_t* column_family,
+    const char* key, size_t klen, const char* ts, size_t tslen, const char* val,
+    size_t vlen, char** errptr);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_transaction_delete_cf_with_ts(
+    rocksdb_transaction_t* txn, rocksdb_column_family_handle_t* column_family,
+    const char* key, size_t klen, const char* ts, size_t tslen,
+    char** errptr);
+
+extern ROCKSDB_LIBRARY_API void rocksdb_transaction_singledelete_cf_with_ts(
+    rocksdb_transaction_t* txn, rocksdb_column_family_handle_t* column_family,
+    const char* key, size_t klen, const char* ts, size_t tslen,
+    char** errptr);
+
 // This snapshot should be freed using rocksdb_free
 extern ROCKSDB_LIBRARY_API const rocksdb_snapshot_t*
 rocksdb_transaction_get_snapshot(rocksdb_transaction_t* txn);
@@ -3391,6 +3412,25 @@ rocksdb_optimistictransactiondb_open(const rocksdb_options_t* options,
 extern ROCKSDB_LIBRARY_API rocksdb_optimistictransactiondb_t*
 rocksdb_optimistictransactiondb_open_column_families(
     const rocksdb_options_t* options, const char* name, int num_column_families,
+    const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr);
+
+extern ROCKSDB_LIBRARY_API rocksdb_optimistictransactiondb_options_t*
+rocksdb_optimistictransactiondb_options_create();
+
+extern ROCKSDB_LIBRARY_API void rocksdb_optimistictransactiondb_options_destroy(
+    rocksdb_optimistictransactiondb_options_t* opt);
+
+extern ROCKSDB_LIBRARY_API void
+rocksdb_optimistictransactiondb_options_set_enable_udt_validation(
+    rocksdb_optimistictransactiondb_options_t* opt, unsigned char enabled);
+
+extern ROCKSDB_LIBRARY_API rocksdb_optimistictransactiondb_t*
+rocksdb_optimistictransactiondb_open_column_families_with_options(
+    const rocksdb_options_t* db_options,
+    const rocksdb_optimistictransactiondb_options_t* occ_options,
+    const char* name, int num_column_families,
     const char* const* column_family_names,
     const rocksdb_options_t* const* column_family_options,
     rocksdb_column_family_handle_t** column_family_handles, char** errptr);

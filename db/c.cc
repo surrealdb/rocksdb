@@ -134,6 +134,7 @@ using ROCKSDB_NAMESPACE::NewRibbonFilterPolicy;
 using ROCKSDB_NAMESPACE::NewSstPartitionerFixedPrefixFactory;
 using ROCKSDB_NAMESPACE::OpenAndCompactOptions;
 using ROCKSDB_NAMESPACE::OptimisticTransactionDB;
+using ROCKSDB_NAMESPACE::OptimisticTransactionDBOptions;
 using ROCKSDB_NAMESPACE::OptimisticTransactionOptions;
 using ROCKSDB_NAMESPACE::Options;
 using ROCKSDB_NAMESPACE::PerfContext;
@@ -353,6 +354,9 @@ struct rocksdb_optimistictransactiondb_t {
 };
 struct rocksdb_optimistictransaction_options_t {
   OptimisticTransactionOptions rep;
+};
+struct rocksdb_optimistictransactiondb_options_t {
+  OptimisticTransactionDBOptions rep;
 };
 struct rocksdb_wait_for_compact_options_t {
   WaitForCompactOptions rep;
@@ -8336,6 +8340,38 @@ void rocksdb_transaction_set_read_timestamp_for_validation(
   txn->rep->SetReadTimestampForValidation(read_timestamp);
 }
 
+void rocksdb_transaction_set_read_timestamp_for_validation_bytes(
+    rocksdb_transaction_t* txn, const char* ts, size_t tslen) {
+  txn->rep->SetReadTimestampForValidation(Slice(ts, tslen));
+}
+
+void rocksdb_transaction_put_cf_with_ts(
+    rocksdb_transaction_t* txn, rocksdb_column_family_handle_t* column_family,
+    const char* key, size_t klen, const char* ts, size_t tslen, const char* val,
+    size_t vlen, char** errptr) {
+  SaveError(errptr, txn->rep->PutWithTimestamp(
+                        column_family->rep, Slice(key, klen), Slice(ts, tslen),
+                        Slice(val, vlen)));
+}
+
+void rocksdb_transaction_delete_cf_with_ts(
+    rocksdb_transaction_t* txn, rocksdb_column_family_handle_t* column_family,
+    const char* key, size_t klen, const char* ts, size_t tslen,
+    char** errptr) {
+  SaveError(errptr, txn->rep->DeleteWithTimestamp(column_family->rep,
+                                                  Slice(key, klen),
+                                                  Slice(ts, tslen)));
+}
+
+void rocksdb_transaction_singledelete_cf_with_ts(
+    rocksdb_transaction_t* txn, rocksdb_column_family_handle_t* column_family,
+    const char* key, size_t klen, const char* ts, size_t tslen,
+    char** errptr) {
+  SaveError(errptr, txn->rep->SingleDeleteWithTimestamp(
+                        column_family->rep, Slice(key, klen),
+                        Slice(ts, tslen)));
+}
+
 // Put a key outside a transaction
 void rocksdb_transactiondb_put(rocksdb_transactiondb_t* txn_db,
                                const rocksdb_writeoptions_t* options,
@@ -8507,6 +8543,58 @@ rocksdb_optimistictransactiondb_t* rocksdb_optimistictransactiondb_open(
   if (SaveError(errptr, OptimisticTransactionDB::Open(
                             options->rep, std::string(name), &otxn_db))) {
     return nullptr;
+  }
+  rocksdb_optimistictransactiondb_t* result =
+      new rocksdb_optimistictransactiondb_t;
+  result->rep = otxn_db;
+  return result;
+}
+
+rocksdb_optimistictransactiondb_options_t*
+rocksdb_optimistictransactiondb_options_create() {
+  return new rocksdb_optimistictransactiondb_options_t;
+}
+
+void rocksdb_optimistictransactiondb_options_destroy(
+    rocksdb_optimistictransactiondb_options_t* opt) {
+  delete opt;
+}
+
+void rocksdb_optimistictransactiondb_options_set_enable_udt_validation(
+    rocksdb_optimistictransactiondb_options_t* opt, unsigned char enabled) {
+  opt->rep.enable_udt_validation = static_cast<bool>(enabled);
+}
+
+rocksdb_optimistictransactiondb_t*
+rocksdb_optimistictransactiondb_open_column_families_with_options(
+    const rocksdb_options_t* db_options,
+    const rocksdb_optimistictransactiondb_options_t* occ_options,
+    const char* name, int num_column_families,
+    const char* const* column_family_names,
+    const rocksdb_options_t* const* column_family_options,
+    rocksdb_column_family_handle_t** column_family_handles, char** errptr) {
+  std::vector<ColumnFamilyDescriptor> column_families;
+  for (int i = 0; i < num_column_families; i++) {
+    column_families.emplace_back(
+        std::string(column_family_names[i]),
+        ColumnFamilyOptions(column_family_options[i]->rep));
+  }
+
+  OptimisticTransactionDB* otxn_db;
+  std::vector<ColumnFamilyHandle*> handles;
+  if (SaveError(errptr, OptimisticTransactionDB::Open(
+                            DBOptions(db_options->rep), occ_options->rep,
+                            std::string(name), column_families, &handles,
+                            &otxn_db))) {
+    return nullptr;
+  }
+
+  for (size_t i = 0; i < handles.size(); i++) {
+    rocksdb_column_family_handle_t* c_handle =
+        new rocksdb_column_family_handle_t;
+    c_handle->rep = handles[i];
+    c_handle->immortal = false;
+    column_family_handles[i] = c_handle;
   }
   rocksdb_optimistictransactiondb_t* result =
       new rocksdb_optimistictransactiondb_t;

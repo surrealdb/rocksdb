@@ -57,10 +57,16 @@ class TransactionUtil {
   // This function should only be called on the write thread or if the
   // mutex is held.
   // tracker must support point lock.
+  //
+  // `read_timestamp_bytes`, if non-null, supersedes the u64 `read_timestamp`
+  // and is used verbatim as the per-CF read timestamp slice — required when
+  // the column family's UDT size is not `sizeof(TxnTimestamp)` (8 bytes).
+  // The pointed-to string must outlive the call.
   static Status CheckKeysForConflicts(
       DBImpl* db_impl, const LockTracker& tracker, bool cache_only,
       TxnTimestamp read_timestamp = kMaxTxnTimestamp,
-      bool enable_udt_validation = true);
+      bool enable_udt_validation = true,
+      const std::string* read_timestamp_bytes = nullptr);
 
  private:
   // If `snap_checker` == nullptr, writes are always commited in sequence number

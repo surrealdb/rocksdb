@@ -403,13 +403,21 @@ Status WriteBatchWithIndex::Put(const Slice& key, const Slice& value) {
 }
 
 Status WriteBatchWithIndex::Put(ColumnFamilyHandle* column_family,
-                                const Slice& /*key*/, const Slice& /*ts*/,
-                                const Slice& /*value*/) {
+                                const Slice& key, const Slice& ts,
+                                const Slice& value) {
   if (!column_family) {
     return Status::InvalidArgument("column family handle cannot be nullptr");
   }
-  // TODO: support WBWI::Put() with timestamp.
-  return Status::NotSupported();
+  size_t last_entry_offset = rep->write_batch.GetDataSize();
+  auto s = rep->write_batch.Put(column_family, key, ts, value);
+  if (s.ok()) {
+    // Index by user key (timestamp-less), matching the no-ts Put overload.
+    // GetFromBatchAndDB looks up by user key; the merged WBWI+DB read path
+    // applies the read timestamp via the configured ReadOptions on the DB
+    // side, not via the index.
+    rep->AddOrUpdateIndex(column_family, key, kPutRecord, last_entry_offset);
+  }
+  return s;
 }
 
 Status WriteBatchWithIndex::PutEntity(ColumnFamilyHandle* column_family,
@@ -445,12 +453,16 @@ Status WriteBatchWithIndex::Delete(const Slice& key) {
 }
 
 Status WriteBatchWithIndex::Delete(ColumnFamilyHandle* column_family,
-                                   const Slice& /*key*/, const Slice& /*ts*/) {
+                                   const Slice& key, const Slice& ts) {
   if (!column_family) {
     return Status::InvalidArgument("column family handle cannot be nullptr");
   }
-  // TODO: support WBWI::Delete() with timestamp.
-  return Status::NotSupported();
+  size_t last_entry_offset = rep->write_batch.GetDataSize();
+  auto s = rep->write_batch.Delete(column_family, key, ts);
+  if (s.ok()) {
+    rep->AddOrUpdateIndex(column_family, key, kDeleteRecord, last_entry_offset);
+  }
+  return s;
 }
 
 Status WriteBatchWithIndex::SingleDelete(ColumnFamilyHandle* column_family,
@@ -474,13 +486,18 @@ Status WriteBatchWithIndex::SingleDelete(const Slice& key) {
 }
 
 Status WriteBatchWithIndex::SingleDelete(ColumnFamilyHandle* column_family,
-                                         const Slice& /*key*/,
-                                         const Slice& /*ts*/) {
+                                         const Slice& key,
+                                         const Slice& ts) {
   if (!column_family) {
     return Status::InvalidArgument("column family handle cannot be nullptr");
   }
-  // TODO: support WBWI::SingleDelete() with timestamp.
-  return Status::NotSupported();
+  size_t last_entry_offset = rep->write_batch.GetDataSize();
+  auto s = rep->write_batch.SingleDelete(column_family, key, ts);
+  if (s.ok()) {
+    rep->AddOrUpdateIndex(column_family, key, kSingleDeleteRecord,
+                          last_entry_offset);
+  }
+  return s;
 }
 
 Status WriteBatchWithIndex::Merge(ColumnFamilyHandle* column_family,

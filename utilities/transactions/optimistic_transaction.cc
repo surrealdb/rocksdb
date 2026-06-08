@@ -91,6 +91,15 @@ Status OptimisticTransaction::SetReadTimestampForValidation(TxnTimestamp ts) {
   return Status::OK();
 }
 
+Status OptimisticTransaction::SetReadTimestampForValidation(const Slice& ts) {
+  // The byte-slice form is mutually exclusive with the u64 form: callers
+  // pick one based on the column family's UDT size. We capture the bytes
+  // verbatim and consume them in `CheckKeysForConflicts`.
+  read_timestamp_bytes_.assign(ts.data(), ts.size());
+  has_read_timestamp_bytes_ = true;
+  return Status::OK();
+}
+
 Status OptimisticTransaction::SetCommitTimestamp(TxnTimestamp ts) {
   auto txn_db_impl = static_cast_with_check<OptimisticTransactionDBImpl,
                                             OptimisticTransactionDB>(txn_db_);
@@ -128,11 +137,51 @@ Status OptimisticTransaction::Operate(ColumnFamilyHandle* column_family,
   assert(ucmp);
   size_t ts_sz = ucmp->timestamp_size();
   if (ts_sz > 0) {
-    assert(ts_sz == sizeof(TxnTimestamp));
+    // The no-ts `Put`/`Delete`/`SingleDelete` flow stamps via
+    // `set_commit_timestamp(u64)` + `MaybeStampWriteBatchTimestamps`, which
+    // produces an 8-byte commit timestamp. Non-u64 UDT comparators are
+    // unsupported here; callers must use the `*WithTimestamp` overloads
+    // and supply the timestamp directly.
+    if (ts_sz != sizeof(TxnTimestamp)) {
+      return Status::NotSupported(
+          "OptimisticTransaction::Put/Delete/SingleDelete without a "
+          "timestamp requires a u64-sized UDT comparator; use the "
+          "*WithTimestamp overloads for non-u64 UDT column families");
+    }
     if (!IndexingEnabled()) {
       cfs_with_ts_tracked_when_indexing_disabled_.insert(
           column_family->GetID());
     }
+  }
+  return operation();
+}
+
+template <typename TKey, typename TOperation>
+Status OptimisticTransaction::OperateTimestamped(
+    ColumnFamilyHandle* column_family, const TKey& key, const bool do_validate,
+    const bool assume_tracked, TOperation&& operation) {
+  Status s;
+  if constexpr (std::is_same_v<Slice, TKey>) {
+    s = TryLock(column_family, key, /*read_only=*/false, /*exclusive=*/true,
+                do_validate, assume_tracked);
+  } else if constexpr (std::is_same_v<SliceParts, TKey>) {
+    std::string key_buf;
+    Slice contiguous_key(key, &key_buf);
+    s = TryLock(column_family, contiguous_key, /*read_only=*/false,
+                /*exclusive=*/true, do_validate, assume_tracked);
+  }
+  if (!s.ok()) {
+    return s;
+  }
+  column_family = column_family ? column_family
+                                : db_->DefaultColumnFamily();
+  assert(column_family);
+  const Comparator* const ucmp = column_family->GetComparator();
+  assert(ucmp);
+  size_t ts_sz = ucmp->timestamp_size();
+  if (ts_sz > 0 && !IndexingEnabled()) {
+    cfs_with_ts_tracked_when_indexing_disabled_.insert(
+        column_family->GetID());
   }
   return operation();
 }
@@ -192,6 +241,38 @@ Status OptimisticTransaction::SingleDelete(ColumnFamilyHandle* column_family,
   });
 }
 
+Status OptimisticTransaction::PutWithTimestamp(ColumnFamilyHandle* column_family,
+                                               const Slice& key,
+                                               const Slice& ts,
+                                               const Slice& value,
+                                               const bool assume_tracked) {
+  const bool do_validate = !assume_tracked;
+  return OperateTimestamped(column_family, key, do_validate, assume_tracked,
+                            [&]() {
+    return GetBatchForWrite()->Put(column_family, key, ts, value);
+  });
+}
+
+Status OptimisticTransaction::DeleteWithTimestamp(
+    ColumnFamilyHandle* column_family, const Slice& key, const Slice& ts,
+    const bool assume_tracked) {
+  const bool do_validate = !assume_tracked;
+  return OperateTimestamped(column_family, key, do_validate, assume_tracked,
+                            [&]() {
+    return GetBatchForWrite()->Delete(column_family, key, ts);
+  });
+}
+
+Status OptimisticTransaction::SingleDeleteWithTimestamp(
+    ColumnFamilyHandle* column_family, const Slice& key, const Slice& ts,
+    const bool assume_tracked) {
+  const bool do_validate = !assume_tracked;
+  return OperateTimestamped(column_family, key, do_validate, assume_tracked,
+                            [&]() {
+    return GetBatchForWrite()->SingleDelete(column_family, key, ts);
+  });
+}
+
 Status OptimisticTransaction::Merge(ColumnFamilyHandle* column_family,
                                     const Slice& key, const Slice& value,
                                     const bool assume_tracked) {
@@ -217,7 +298,13 @@ Status OptimisticTransaction::MaybeStampWriteBatchTimestamps() {
   WriteBatch* wb = wbwi->GetWriteBatch();
   assert(wb);
 
-  const bool needs_ts = WriteBatchInternal::HasKeyWithTimestamp(*wb);
+  // Gate stamping on `needs_in_place_update_ts_` (set only by the no-ts
+  // `Put`/`Delete`/`SingleDelete` overloads, which leave a dummy timestamp
+  // slot to be backfilled at commit time) rather than `has_key_with_ts_`
+  // (also set by the with-ts overloads, which provide the final timestamp
+  // up front). This makes pre-stamped UDT writes from `PutWithTimestamp`
+  // survive commit unmodified.
+  const bool needs_ts = WriteBatchInternal::TimestampsUpdateNeeded(*wb);
   if (!needs_ts) {
     return Status::OK();
   }
@@ -319,7 +406,8 @@ Status OptimisticTransaction::CommitWithParallelValidate() {
 
   s = TransactionUtil::CheckKeysForConflicts(
       db_impl, *tracked_locks_, true /* cache_only */, read_timestamp_,
-      txn_db_impl->GetEnableUdtValidation());
+      txn_db_impl->GetEnableUdtValidation(),
+      has_read_timestamp_bytes_ ? &read_timestamp_bytes_ : nullptr);
   if (!s.ok()) {
     return s;
   }
@@ -385,7 +473,8 @@ Status OptimisticTransaction::CheckTransactionForConflicts(DB* db) {
   // for conflicts.
   return TransactionUtil::CheckKeysForConflicts(
       db_impl, *tracked_locks_, true /* cache_only */, read_timestamp_,
-      txn_db_impl->GetEnableUdtValidation());
+      txn_db_impl->GetEnableUdtValidation(),
+      has_read_timestamp_bytes_ ? &read_timestamp_bytes_ : nullptr);
 }
 
 Status OptimisticTransaction::SetName(const TransactionName& /* unused */) {

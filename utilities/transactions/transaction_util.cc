@@ -154,7 +154,8 @@ Status TransactionUtil::CheckKey(DBImpl* db_impl, SuperVersion* sv,
 
 Status TransactionUtil::CheckKeysForConflicts(
     DBImpl* db_impl, const LockTracker& tracker, bool cache_only,
-    TxnTimestamp read_timestamp, bool enable_udt_validation) {
+    TxnTimestamp read_timestamp, bool enable_udt_validation,
+    const std::string* read_timestamp_bytes) {
   Status result;
 
   std::unique_ptr<LockTracker::ColumnFamilyIterator> cf_it(
@@ -173,10 +174,21 @@ Status TransactionUtil::CheckKeysForConflicts(
     SequenceNumber earliest_seq =
         db_impl->GetEarliestMemTableSequenceNumber(sv, true);
 
-    // Build the read timestamp string for this CF if applicable.
+    // Build the read timestamp string for this CF if applicable. The byte
+    // slice form takes precedence: when the caller supplied it, the u64
+    // `read_timestamp` value is ignored. CFs whose UDT size doesn't match
+    // the supplied byte slice still pass through GetLatestSequenceForKey
+    // unchanged (the call will assert/error if the size mismatch matters).
     std::string read_ts_buf;
     const std::string* read_ts_ptr = nullptr;
-    if (read_timestamp < kMaxTxnTimestamp) {
+    if (read_timestamp_bytes != nullptr) {
+      const Comparator* const ucmp = sv->cfd->user_comparator();
+      assert(ucmp);
+      size_t ts_sz = ucmp->timestamp_size();
+      if (ts_sz > 0) {
+        read_ts_ptr = read_timestamp_bytes;
+      }
+    } else if (read_timestamp < kMaxTxnTimestamp) {
       const Comparator* const ucmp = sv->cfd->user_comparator();
       assert(ucmp);
       size_t ts_sz = ucmp->timestamp_size();

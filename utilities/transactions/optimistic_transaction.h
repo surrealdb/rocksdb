@@ -50,6 +50,8 @@ class OptimisticTransaction : public TransactionBaseImpl {
 
   Status SetReadTimestampForValidation(TxnTimestamp ts) override;
 
+  Status SetReadTimestampForValidation(const Slice& ts) override;
+
   Status SetCommitTimestamp(TxnTimestamp ts) override;
 
   TxnTimestamp GetCommitTimestamp() const override { return commit_timestamp_; }
@@ -80,6 +82,18 @@ class OptimisticTransaction : public TransactionBaseImpl {
                const SliceParts& value,
                const bool assume_tracked = false);
 
+  Status PutWithTimestamp(ColumnFamilyHandle* column_family, const Slice& key,
+                          const Slice& ts, const Slice& value,
+                          const bool assume_tracked = false) override;
+
+  Status DeleteWithTimestamp(ColumnFamilyHandle* column_family,
+                             const Slice& key, const Slice& ts,
+                             const bool assume_tracked = false) override;
+
+  Status SingleDeleteWithTimestamp(ColumnFamilyHandle* column_family,
+                                   const Slice& key, const Slice& ts,
+                                   const bool assume_tracked = false) override;
+
  protected:
   Status TryLock(ColumnFamilyHandle* column_family, const Slice& key,
                  bool read_only, bool exclusive, const bool do_validate = true,
@@ -90,6 +104,12 @@ class OptimisticTransaction : public TransactionBaseImpl {
 
   TxnTimestamp read_timestamp_{kMaxTxnTimestamp};
   TxnTimestamp commit_timestamp_{kMaxTxnTimestamp};
+
+  // Byte-slice read timestamp for non-u64 UDT (e.g. 16-byte cluster UDT).
+  // When `has_read_timestamp_bytes_` is true, `CheckKeysForConflicts` uses
+  // these bytes; otherwise it falls back to `read_timestamp_` (u64 path).
+  std::string read_timestamp_bytes_;
+  bool has_read_timestamp_bytes_{false};
 
   std::unordered_set<uint32_t> cfs_with_ts_tracked_when_indexing_disabled_;
 
@@ -121,6 +141,14 @@ class OptimisticTransaction : public TransactionBaseImpl {
   Status Operate(ColumnFamilyHandle* column_family, const TKey& key,
                  const bool do_validate, const bool assume_tracked,
                  TOperation&& operation);
+
+  // Same as `Operate`, but skips the `ts_sz == sizeof(TxnTimestamp)` check —
+  // the caller has supplied the timestamp bytes directly (via the
+  // `*WithTimestamp` overloads) so non-u64 UDT sizes are valid here.
+  template <typename TKey, typename TOperation>
+  Status OperateTimestamped(ColumnFamilyHandle* column_family, const TKey& key,
+                            const bool do_validate, const bool assume_tracked,
+                            TOperation&& operation);
 };
 
 // Used at commit time to trigger transaction validation
