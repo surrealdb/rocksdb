@@ -830,11 +830,13 @@ IOStatus S3StorageProvider::CopyCloudObject(
   Aws::String src_bucket = ToAwsString(bucket_name_src);
   Aws::String dest_bucket = ToAwsString(bucket_name_dest);
 
-  // The filename is the same as the object name in the bucket
-  Aws::String src_object = ToAwsString(object_path_src);
-  Aws::String dest_object = ToAwsString(object_path_dest);
+  // S3 CopySource must be "bucket/key". Object paths may arrive with or
+  // without a leading '/', so strip one leading slash before joining —
+  // otherwise we emit "bucketkey" (invalid) or "bucket//key".
+  Aws::String src_object = ToAwsString(ltrim_if(object_path_src, '/'));
+  Aws::String dest_object = ToAwsString(ltrim_if(object_path_dest, '/'));
 
-  Aws::String src_url = src_bucket + src_object;
+  Aws::String src_url = src_bucket + "/" + src_object;
 
   // create copy request
   Aws::S3::Model::CopyObjectRequest request;

@@ -1870,6 +1870,10 @@ TEST_F(CloudTest, CheckpointToCloud) {
 }
 
 // Basic test to copy object within S3.
+//
+// Exercises CopyCloudObject's S3 CopySource construction ("bucket/key").
+// Also copies again with a leading-'/' source key to ensure the provider
+// does not emit "bucket//key" or the broken "bucketkey" form.
 TEST_F(CloudTest, CopyObjectTest) {
   CreateCloudEnv();
 
@@ -1879,6 +1883,7 @@ TEST_F(CloudTest, CopyObjectTest) {
   std::string content = "This is a test file";
   std::string fname = dbname_ + "/100000.sst";
   std::string dst_fname = dbname_ + "/200000.sst";
+  std::string dst_fname_slash = dbname_ + "/300000.sst";
 
   {
     std::unique_ptr<FSWritableFile> writableFile;
@@ -1888,16 +1893,23 @@ TEST_F(CloudTest, CopyObjectTest) {
     writableFile->Fsync(kIOOptions, kDbg);
   }
 
+  std::string remapped = GetCloudFileSystem()->RemapFilename(fname);
   auto st = GetCloudFileSystem()->GetStorageProvider()->CopyCloudObject(
-      GetCloudFileSystem()->GetSrcBucketName(),
-      GetCloudFileSystem()->RemapFilename(fname),
+      GetCloudFileSystem()->GetSrcBucketName(), remapped,
       GetCloudFileSystem()->GetSrcBucketName(), dst_fname);
   ASSERT_OK(st);
 
-  {
+  // Leading slash on the source object key must still resolve to the same
+  // object (CopySource = bucket + "/" + ltrim(key, '/')).
+  st = GetCloudFileSystem()->GetStorageProvider()->CopyCloudObject(
+      GetCloudFileSystem()->GetSrcBucketName(), "/" + remapped,
+      GetCloudFileSystem()->GetSrcBucketName(), dst_fname_slash);
+  ASSERT_OK(st);
+
+  for (const auto& dst : {dst_fname, dst_fname_slash}) {
     std::unique_ptr<CloudStorageReadableFile> readableFile;
     st = GetCloudFileSystem()->GetStorageProvider()->NewCloudReadableFile(
-        GetCloudFileSystem()->GetSrcBucketName(), dst_fname, kFileOptions,
+        GetCloudFileSystem()->GetSrcBucketName(), dst, kFileOptions,
         &readableFile, kDbg);
     ASSERT_OK(st);
 
