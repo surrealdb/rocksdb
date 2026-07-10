@@ -253,6 +253,11 @@ class CloudFileSystemImpl : public CloudFileSystem {
                                const std::string& cloud_name,
                                const PutObjectOptions& options = {}) override;
 
+  // True when `{dest}/.refs/` lists at least one object, or when the list
+  // call fails (fail closed). Used to pause obsolete-file S3 deletion while
+  // a branch still depends on this dest's SST bodies.
+  bool HasOutstandingBranchRefs() const;
+
   Status PrepareOptions(const ConfigOptions& config_options) override;
   Status ValidateOptions(const DBOptions& /*db_opts*/,
                          const ColumnFamilyOptions& /*cf_opts*/) const override;

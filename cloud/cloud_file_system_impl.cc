@@ -817,6 +817,28 @@ IOStatus CloudFileSystemImpl::CopyLocalFileToDest(
                                               dest_name, options);
 }
 
+bool CloudFileSystemImpl::HasOutstandingBranchRefs() const {
+  if (!HasDestBucket()) {
+    return false;
+  }
+  const std::string refs_prefix = GetDestObjectPath() + "/.refs/";
+  std::vector<std::string> objects;
+  auto st = GetStorageProvider()->ListCloudObjects(GetDestBucketName(),
+                                                   refs_prefix, &objects);
+  if (!st.ok()) {
+    if (st.IsNotFound()) {
+      return false;
+    }
+    // Fail closed: an undetached branch may still need these SST bodies.
+    Log(InfoLogLevel::WARN_LEVEL, info_log_,
+        "[CloudFileSystemImpl] HasOutstandingBranchRefs: list %s failed (%s); "
+        "treating refs as non-empty",
+        refs_prefix.c_str(), st.ToString().c_str());
+    return true;
+  }
+  return !objects.empty();
+}
+
 IOStatus CloudFileSystemImpl::DeleteCloudFileFromDest(
     const std::string& fname) {
   assert(HasDestBucket());
@@ -830,29 +852,75 @@ IOStatus CloudFileSystemImpl::DeleteCloudFileFromDest(
   }
 
   if (!cloud_file_deletion_scheduler_) {
+    // No delay scheduler: still refuse to delete while .refs exist.
+    if (HasOutstandingBranchRefs()) {
+      Log(InfoLogLevel::INFO_LEVEL, info_log_,
+          "[CloudFileSystemImpl] DeleteCloudFileFromDest: outstanding .refs "
+          "under %s; skipping immediate deletion of %s",
+          GetDestObjectPath().c_str(), path.c_str());
+      return IOStatus::OK();
+    }
     return GetStorageProvider()->DeleteCloudObject(bucket, path);
   }
   std::weak_ptr<Logger> info_log_wp = info_log_;
   std::weak_ptr<CloudStorageProvider> storage_provider_wp =
       GetStorageProvider();
-  auto file_deletion_runnable =
-      [path = std::move(path), bucket = std::move(bucket),
-       info_log_wp = std::move(info_log_wp),
-       storage_provider_wp = std::move(storage_provider_wp)]() {
-        auto storage_provider = storage_provider_wp.lock();
-        auto info_log = info_log_wp.lock();
-        if (!storage_provider || !info_log) {
-          return;
-        }
-        auto st = storage_provider->DeleteCloudObject(bucket, path);
-        if (!st.ok() && !st.IsNotFound()) {
-          Log(InfoLogLevel::ERROR_LEVEL, info_log,
-              "[CloudFileSystemImpl] DeleteFile file %s error %s", path.c_str(),
-              st.ToString().c_str());
-        }
-      };
+  std::weak_ptr<CloudFileDeletionScheduler> scheduler_wp =
+      cloud_file_deletion_scheduler_;
+  const std::string dest_bucket = GetDestBucketName();
+  const std::string dest_path = GetDestObjectPath();
+
+  // Shared so a deferred run can reschedule the same logic after the delay
+  // without relying on `this` (the CloudFileSystemImpl may outlive scheduled
+  // jobs only via the weak provider/logger captures below).
+  auto self =
+      std::make_shared<CloudFileDeletionScheduler::FileDeletionRunnable>();
+  *self = [self, path, bucket, base, dest_bucket, dest_path, info_log_wp,
+           storage_provider_wp, scheduler_wp]() {
+    auto storage_provider = storage_provider_wp.lock();
+    auto info_log = info_log_wp.lock();
+    if (!storage_provider || !info_log) {
+      return;
+    }
+
+    // Pause obsolete-file S3 deletion while any `.refs/` markers exist under
+    // this dest. Branch clusters may still read those SST bodies via FALLBACK
+    // until DetachBranch clears the ref. Reschedule with the configured delay
+    // so deletions proceed automatically once refs become empty.
+    const std::string refs_prefix = dest_path + "/.refs/";
+    std::vector<std::string> refs;
+    auto list_st =
+        storage_provider->ListCloudObjects(dest_bucket, refs_prefix, &refs);
+    bool defer = false;
+    if (!list_st.ok() && !list_st.IsNotFound()) {
+      defer = true;
+      Log(InfoLogLevel::WARN_LEVEL, info_log,
+          "[CloudFileSystemImpl] DeleteCloudFileFromDest: listing %s failed "
+          "(%s); deferring deletion of %s",
+          refs_prefix.c_str(), list_st.ToString().c_str(), path.c_str());
+    } else if (!refs.empty()) {
+      defer = true;
+      Log(InfoLogLevel::INFO_LEVEL, info_log,
+          "[CloudFileSystemImpl] DeleteCloudFileFromDest: %zu outstanding "
+          ".refs under %s; deferring deletion of %s",
+          refs.size(), dest_path.c_str(), path.c_str());
+    }
+    if (defer) {
+      if (auto scheduler = scheduler_wp.lock()) {
+        scheduler->ScheduleFileDeletion(base, [self]() { (*self)(); });
+      }
+      return;
+    }
+
+    auto st = storage_provider->DeleteCloudObject(bucket, path);
+    if (!st.ok() && !st.IsNotFound()) {
+      Log(InfoLogLevel::ERROR_LEVEL, info_log,
+          "[CloudFileSystemImpl] DeleteFile file %s error %s", path.c_str(),
+          st.ToString().c_str());
+    }
+  };
   return cloud_file_deletion_scheduler_->ScheduleFileDeletion(
-      base, std::move(file_deletion_runnable));
+      base, [self]() { (*self)(); });
 }
 
 // Copy my IDENTITY file to cloud storage. Update dbid registry.

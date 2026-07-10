@@ -15,6 +15,7 @@
 #include <cinttypes>
 #include <filesystem>
 
+#include "cloud/cloud_branch.h"
 #include "cloud/cloud_manifest.h"
 #include "cloud/cloud_scheduler.h"
 #include "cloud/db_cloud_impl.h"
@@ -3102,6 +3103,62 @@ TEST_F(CloudTest, CloudFileDeletionNotTriggeredIfDestBucketNotSet) {
   WaitUntilNoScheduledJobs();
   for (auto& fname : files_to_delete) {
     EXPECT_NOK(ExistsCloudObject(fname));
+  }
+  CloseDB();
+}
+
+// Outstanding `.refs/` under dest must pause the obsolete-file deletion
+// scheduler: compacted-away SST bodies stay in the bucket until the ref is
+// cleared, then the deferred deletion may proceed.
+TEST_F(CloudTest, CloudFileDeletionDeferredWhileBranchRefsExist) {
+  cloud_fs_options_.cloud_file_deletion_delay = std::chrono::seconds(1);
+  cloud_fs_options_.delete_cloud_invisible_files_on_open = false;
+
+  OpenDB();
+
+  // Plant the retention marker before compaction so scheduled deletions never
+  // win a race against the ref write.
+  BranchInfo ref;
+  ref.dbid = "child-dbid-for-refs-gate";
+  ref.object_path = GetCloudFileSystem()->GetDestObjectPath() + "-branch";
+  ref.bucket_name = GetCloudFileSystem()->GetDestBucketName();
+  ref.fork_file_number = 100;
+  ref.fork_epoch = "epoch";
+  ref.created_at = 1;
+  ASSERT_OK(CloudBranchUtil::WriteRefObject(
+      GetCloudFileSystem()->GetStorageProvider(),
+      GetCloudFileSystem()->GetDestBucketName(),
+      GetCloudFileSystem()->GetDestObjectPath(), ref,
+      GetCloudFileSystemImpl()->GetBaseFileSystem()));
+  ASSERT_TRUE(GetCloudFileSystemImpl()->HasOutstandingBranchRefs());
+
+  std::vector<std::string> obsolete_files;
+  GenerateObsoleteFilesOnEmptyDB(GetDBImpl(), GetCloudFileSystem(),
+                                 &obsolete_files);
+  ASSERT_FALSE(obsolete_files.empty());
+
+  // Give the scheduler several delay periods; files must survive.
+  for (int i = 0; i < 3; ++i) {
+    usleep(1200 * 1000);
+    for (auto& fname : obsolete_files) {
+      EXPECT_OK(ExistsCloudObject(fname))
+          << "obsolete file deleted while .refs present: " << fname;
+    }
+  }
+  // Jobs may still be queued (deferred); that is expected.
+  ASSERT_GT(GetCloudFileSystemImpl()->TEST_NumScheduledJobs(), 0);
+
+  // Clear the ref (DetachBranch's retention release) and allow deletions.
+  ASSERT_OK(CloudBranchUtil::DeleteRefObject(
+      GetCloudFileSystem()->GetStorageProvider(),
+      GetCloudFileSystem()->GetDestBucketName(),
+      GetCloudFileSystem()->GetDestObjectPath(), ref.dbid));
+  ASSERT_FALSE(GetCloudFileSystemImpl()->HasOutstandingBranchRefs());
+
+  WaitUntilNoScheduledJobs();
+  for (auto& fname : obsolete_files) {
+    EXPECT_NOK(ExistsCloudObject(fname))
+        << "obsolete file should be deleted after .refs cleared: " << fname;
   }
   CloseDB();
 }
