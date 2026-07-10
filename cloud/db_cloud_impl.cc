@@ -571,8 +571,11 @@ Status DBCloudImpl::DetachBranch() {
   std::vector<LiveFileMetaData> live_files;
   GetLiveFilesMetaData(&live_files);
 
-  // Copy SSTs that are in the parent's path to our own path
-  Status st;
+  // Materialize every live SST under dest before clearing parent/.refs.
+  // A missing body must fail the detach: returning OK after skipping a
+  // NotFound copy would clear the retention marker while the dest is still
+  // incomplete (permanent loss once live/fallback prefixes are deleted).
+  Status st = Status::OK();
   for (const auto& file : live_files) {
     auto remapped_fname = cfs->RemapFilename(file.name);
     auto dest_path = cfs->GetDestObjectPath() + "/" + remapped_fname;
@@ -602,22 +605,65 @@ Status DBCloudImpl::DetachBranch() {
         st = provider->CopyCloudObject(fb.GetBucketName(), src_path,
                                        cfs->GetDestBucketName(), dest_path);
         if (st.ok()) break;
+        if (!st.IsNotFound()) {
+          Log(InfoLogLevel::ERROR_LEVEL, GetOptions().info_log,
+              "DetachBranch: failed to copy from fallback %s -> %s: %s",
+              src_path.c_str(), dest_path.c_str(), st.ToString().c_str());
+          EnableFileDeletions();
+          return st;
+        }
       }
+    }
+
+    // Last resort: upload from the local SST cache. A branched node often
+    // still holds the bytes after parent/fallback objects are gone.
+    if (st.IsNotFound()) {
+      std::string local_path;
+      if (!file.directory.empty() && !file.relative_filename.empty()) {
+        local_path = file.directory + "/" + file.relative_filename;
+      } else if (!file.db_path.empty() && !file.name.empty()) {
+        // Deprecated fields: `name` carries a leading '/'.
+        local_path = file.db_path + file.name;
+      }
+      if (!local_path.empty()) {
+        auto put = provider->PutCloudObject(local_path, cfs->GetDestBucketName(),
+                                            dest_path);
+        if (put.ok()) {
+          st = Status::OK();
+        } else if (!put.IsNotFound()) {
+          Log(InfoLogLevel::ERROR_LEVEL, GetOptions().info_log,
+              "DetachBranch: failed to upload local %s -> %s: %s",
+              local_path.c_str(), dest_path.c_str(), put.ToString().c_str());
+          EnableFileDeletions();
+          return put;
+        }
+      }
+    }
+
+    if (!st.ok()) {
+      Log(InfoLogLevel::ERROR_LEVEL, GetOptions().info_log,
+          "DetachBranch: cannot materialize live file %s (dest/parent/"
+          "fallbacks/local all missed)",
+          remapped_fname.c_str());
+      EnableFileDeletions();
+      return Status::NotFound(
+          "DetachBranch: cannot materialize live file " + remapped_fname);
     }
   }
 
-  // Delete the ref from the parent
+  // Delete the ref from the parent only after every live file is under dest.
   std::string dbid;
   st = GetDbIdentity(dbid);
-  if (st.ok()) {
-    // Try parent bucket (same as dest for typical setup)
-    CloudBranchUtil::DeleteRefObject(provider, cfs->GetDestBucketName(),
-                                     parent_path, dbid);
+  if (!st.ok()) {
+    EnableFileDeletions();
+    return st;
   }
+  CloudBranchUtil::DeleteRefObject(provider, cfs->GetDestBucketName(),
+                                   parent_path, dbid);
 
   // Clear the parent ref in our CloudManifest and persist to cloud
   cfs->GetCloudManifest()->SetParentObjectPath("");
-  if (st.ok()) {
+  {
     auto& opts = cfs->GetCloudFileSystemOptions();
     auto cookie = opts.new_cookie_on_open.empty() ? opts.cookie_on_open
                                                    : opts.new_cookie_on_open;
@@ -626,16 +672,16 @@ Status DBCloudImpl::DetachBranch() {
       Log(InfoLogLevel::ERROR_LEVEL, GetOptions().info_log,
           "DetachBranch: failed to persist CloudManifest: %s",
           us.ToString().c_str());
-      st = us;
+      EnableFileDeletions();
+      return us;
     }
   }
 
   EnableFileDeletions();
 
   Log(InfoLogLevel::INFO_LEVEL, GetOptions().info_log,
-      "DetachBranch from parent %s: %s", parent_path.c_str(),
-      st.ToString().c_str());
-  return st;
+      "DetachBranch from parent %s: OK", parent_path.c_str());
+  return Status::OK();
 }
 
 Status DBCloudImpl::ListBranches(std::vector<BranchInfo>* branches) {
