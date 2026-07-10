@@ -652,14 +652,59 @@ Status DBCloudImpl::DetachBranch() {
   }
 
   // Delete the ref from the parent only after every live file is under dest.
+  // Overlay opens may surface a MANIFEST-rooted identity prefix rather than the
+  // full CreateBranch child dbid used as the `.refs/` object key — list refs
+  // and delete any whose dbid matches this identity at a `cloud` chain boundary.
   std::string dbid;
   st = GetDbIdentity(dbid);
   if (!st.ok()) {
     EnableFileDeletions();
     return st;
   }
-  CloudBranchUtil::DeleteRefObject(provider, cfs->GetDestBucketName(),
-                                   parent_path, dbid);
+  {
+    std::vector<BranchInfo> refs;
+    auto list_st = CloudBranchUtil::ListRefObjects(
+        provider, cfs->GetDestBucketName(), parent_path, &refs,
+        cfs->GetBaseFileSystem());
+    if (!list_st.ok()) {
+      EnableFileDeletions();
+      return list_st;
+    }
+    auto identities_match = [](const std::string& a, const std::string& b) {
+      static const std::string kSep = "cloud";
+      if (a == b) return true;
+      auto is_chain_prefix = [&](const std::string& prefix,
+                                 const std::string& full) {
+        return full.size() > prefix.size() &&
+               full.compare(0, prefix.size(), prefix) == 0 &&
+               full.compare(prefix.size(), kSep.size(), kSep) == 0;
+      };
+      return is_chain_prefix(a, b) || is_chain_prefix(b, a);
+    };
+    bool deleted_any = false;
+    for (const auto& ref : refs) {
+      if (!identities_match(ref.dbid, dbid)) {
+        continue;
+      }
+      auto del_st = CloudBranchUtil::DeleteRefObject(
+          provider, cfs->GetDestBucketName(), parent_path, ref.dbid);
+      if (!del_st.ok() && !del_st.IsNotFound()) {
+        EnableFileDeletions();
+        return del_st;
+      }
+      deleted_any = true;
+    }
+    if (!deleted_any) {
+      // Fall back to deleting by the open identity (exact key) for the
+      // CreateBranch-same-process case where ListRefObjects is empty/racy.
+      auto del_st = CloudBranchUtil::DeleteRefObject(
+          provider, cfs->GetDestBucketName(), parent_path, dbid);
+      if (!del_st.ok() && !del_st.IsNotFound()) {
+        EnableFileDeletions();
+        return del_st;
+      }
+    }
+  }
 
   // Clear the parent ref in our CloudManifest and persist to cloud
   cfs->GetCloudManifest()->SetParentObjectPath("");
