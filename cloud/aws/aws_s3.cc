@@ -855,6 +855,16 @@ IOStatus S3StorageProvider::CopyCloudObject(
     Log(InfoLogLevel::ERROR_LEVEL, cfs_->GetLogger(),
         "[s3] S3WritableFile src path %s error in copying to %s %s",
         src_url.c_str(), dest_object.c_str(), errmsg.c_str());
+    // Missing source must be NotFound so callers (DetachBranch) can walk
+    // fallback buckets / local SST cache. HeadObject already maps these;
+    // CopyObject must too. MinIO often reports NoSuchKey with a message
+    // whose SDK error type is not always NO_SUCH_KEY.
+    if (IsNotFound(error.GetErrorType()) ||
+        error.GetResponseCode() == Aws::Http::HttpResponseCode::NOT_FOUND ||
+        errmsg.find("key does not exist") != std::string::npos ||
+        errmsg.find("NoSuchKey") != std::string::npos) {
+      return IOStatus::NotFound(object_path_src.c_str(), errmsg.c_str());
+    }
     return IOStatus::IOError(dest_object.c_str(), errmsg.c_str());
   }
   Log(InfoLogLevel::INFO_LEVEL, cfs_->GetLogger(),
