@@ -1477,6 +1477,28 @@ IOStatus CloudFileSystemImpl::NeedsReinitialization(
       }
     }
 
+    // Dest-backed ephemeral clones (branch-cluster overlays: src=BASE,
+    // dest=overlay) keep their own cloud objects under dest. ResyncDir is
+    // only for dest-less clones and returns InvalidArgument when a dest
+    // bucket is set — treating that as "reinit" would wipe local WAL /
+    // MANIFEST on every routine restart. When local CLOUDMANIFEST and its
+    // epoch MANIFEST agree, keep the local directory.
+    if (HasDestBucket()) {
+      if (!load_status.ok()) {
+        Log(InfoLogLevel::WARN_LEVEL, info_log_,
+            "[cloud_fs_impl] NeedsReinitialization: dest-backed ephemeral "
+            "clone cannot load local CLOUDMANIFEST (%s); reinit",
+            load_status.ToString().c_str());
+        return IOStatus::OK();
+      }
+      Log(InfoLogLevel::INFO_LEVEL, info_log_,
+          "[cloud_fs_impl] NeedsReinitialization: dest-backed ephemeral "
+          "clone local dir %s is compatible; skip reinit",
+          local_dir.c_str());
+      *do_reinit = false;
+      return IOStatus::OK();
+    }
+
     // Resync all files from cloud.
     // If the  resycn failed, then return success to indicate that
     // the local directory needs to be completely removed and recreated.
