@@ -10030,6 +10030,26 @@ void rocksdb_cloud_otxn_db_detach_branch(rocksdb_cloud_otxn_db_t* otxn_db,
   SaveError(errptr, otxn_db->rep->DetachBranch());
 }
 
+void rocksdb_cloud_otxn_db_list_branches(rocksdb_cloud_otxn_db_t* otxn_db,
+                                         char*** dbids_out, char*** paths_out,
+                                         size_t* count, char** errptr) {
+  std::vector<ROCKSDB_NAMESPACE::BranchInfo> branches;
+  auto st = otxn_db->rep->ListBranches(&branches);
+  if (!st.ok()) {
+    SaveError(errptr, st);
+    return;
+  }
+  *count = branches.size();
+  *dbids_out =
+      static_cast<char**>(malloc(branches.size() * sizeof(char*)));
+  *paths_out =
+      static_cast<char**>(malloc(branches.size() * sizeof(char*)));
+  for (size_t i = 0; i < branches.size(); i++) {
+    (*dbids_out)[i] = strdup(branches[i].dbid.c_str());
+    (*paths_out)[i] = strdup(branches[i].object_path.c_str());
+  }
+}
+
 // CloudTransactionDB
 
 rocksdb_cloud_txn_db_t* rocksdb_cloud_txn_db_open(

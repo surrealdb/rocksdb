@@ -4434,6 +4434,10 @@ extern ROCKSDB_LIBRARY_API void rocksdb_cloud_otxn_db_create_branch(
 extern ROCKSDB_LIBRARY_API void rocksdb_cloud_otxn_db_detach_branch(
     rocksdb_cloud_otxn_db_t* otxn_db, char** errptr);
 
+extern ROCKSDB_LIBRARY_API void rocksdb_cloud_otxn_db_list_branches(
+    rocksdb_cloud_otxn_db_t* otxn_db, char*** dbids_out, char*** paths_out,
+    size_t* count, char** errptr);
+
 /* CloudTransactionDB */
 
 extern ROCKSDB_LIBRARY_API rocksdb_cloud_txn_db_t*
